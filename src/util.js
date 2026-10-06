@@ -88,3 +88,44 @@ export function normalizeForMerge(geo, keep = ['position', 'normal', 'uv', 'colo
 }
 
 export const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+// Height canvas (bright = high) -> tangent-space normal map.
+export function normalMapFrom(src, strength = 2, { repeat = true } = {}) {
+  const w = src.width, h = src.height;
+  const data = src.getContext('2d').getImageData(0, 0, w, h).data;
+  const H = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) H[i] = (data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2]) / 765;
+  const out = document.createElement('canvas');
+  out.width = w;
+  out.height = h;
+  const ctx = out.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  const at = (x, y) => H[((y + h) % h) * w + ((x + w) % w)];
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+      const dy = (at(x, y + 1) - at(x, y - 1)) * strength;
+      const l = Math.hypot(dx, dy, 1);
+      const i = (y * w + x) * 4;
+      img.data[i] = (-dx / l * 0.5 + 0.5) * 255;
+      img.data[i + 1] = (dy / l * 0.5 + 0.5) * 255;
+      img.data[i + 2] = (1 / l * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+  ctx.putImageData(img, 0, 0);
+  return tex(out, { srgb: false, repeat });
+}
+
+// Darken surfaces near the ground (grime, splash-back, ambient occlusion feel).
+export function addGroundGrime(material, { height = 2.6, strength = 0.32 } = {}) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vGrimeY;')
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\n{ vec4 gp = vec4( transformed, 1.0 );\n#ifdef USE_INSTANCING\n gp = instanceMatrix * gp;\n#endif\n vGrimeY = (modelMatrix * gp).y; }');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vGrimeY;')
+      .replace('#include <map_fragment>', `#include <map_fragment>\n diffuseColor.rgb *= mix(1.0 - ${strength.toFixed(3)}, 1.0, smoothstep(0.0, ${height.toFixed(2)}, vGrimeY));`);
+  };
+  material.customProgramCacheKey = () => 'grime' + height + strength;
+  return material;
+}

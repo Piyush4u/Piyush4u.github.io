@@ -5,9 +5,14 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { GTAOPass } from 'three/examples/jsm/postprocessing/GTAOPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { createEnvironment, GradeShader } from './env.js';
+import { loadTextures } from './materials.js';
 import { clamp, lerp, smooth, easeInOut, remap, nextFrame } from './util.js';
 import { buildRoute, buildWorld, buildBridge, RIVER, WALK_OUT } from './world.js';
 import { buildTaxi } from './taxi.js';
+import { loadCar } from './car.js';
 import { place, chaiStall, paperMountain, kpiTower, pharmacy, steelPlant, billboard, toolCrates } from './landmarks.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -85,16 +90,22 @@ async function main() {
 
   const sun = new THREE.DirectionalLight(0xffffff, 3);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(isMobile ? 1024 : 2048, isMobile ? 1024 : 2048);
+  sun.shadow.mapSize.set(isMobile ? 1024 : 4096, isMobile ? 1024 : 4096);
   const sc = sun.shadow.camera;
-  sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45; sc.near = 1; sc.far = 400;
+  sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 400;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
   scene.add(sun, sun.target);
   const hemi = new THREE.HemisphereLight(0xbcd6ff, 0x4b4a3a, 0.8);
   scene.add(hemi);
 
-  setLoad(0.2, 'Laying the road…');
+  setLoad(0.12, 'Mixing paint…');
+  const [env] = await Promise.all([
+    createEnvironment(renderer),
+    loadTextures(renderer, (k) => setLoad(0.12 + k * 0.2, 'Mixing paint…')),
+  ]);
+  env.update(0, scene);
+  setLoad(0.34, 'Laying the road…');
   await nextFrame();
   const route = buildRoute();
 
@@ -173,7 +184,7 @@ async function main() {
   const work = STOPS[5];
   const boards = PROJECTS.map((p, i) => {
     const b = addLandmark(billboard(p, i), work.u - work.creep / 2 + 0.008 + (i * (work.creep + 0.006)) / 4, 1, WALK_OUT + 0.6);
-    b.group.rotateY(-0.3);
+    b.group.rotateY(0.55);
     return b;
   });
   addLandmark(toolCrates(TOOLS), STOPS[6].u + 0.004, -1, WALK_OUT + 1.6);
@@ -186,7 +197,15 @@ async function main() {
   const bridge = buildBridge(scene, route);
 
   // the hero
-  const taxi = buildTaxi({ lights: true });
+  // the hero car (falls back to the hand-built Ambassador if the model can't load)
+  setLoad(0.7, 'Rolling the Camaro out…');
+  let taxi;
+  try {
+    taxi = await loadCar((k) => setLoad(0.7 + k * 0.08, 'Rolling the Camaro out…'));
+  } catch (e) {
+    console.warn('Car model failed, using the Ambassador', e);
+    taxi = buildTaxi({ lights: true });
+  }
   scene.add(taxi.root);
   // a few parked cousins
   const parked = [];
@@ -202,13 +221,30 @@ async function main() {
   // ---------------------------------------------------------------- post
   setLoad(0.8, 'Warming the engine…');
   await nextFrame();
-  let composer = null, bloom = null;
+  let composer = null, bloom = null, grade = null, gtao = null;
   if (!isMobile) {
-    composer = new EffectComposer(renderer);
+    const w = innerWidth * pixelRatio, h = innerHeight * pixelRatio;
+    const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(w, h) });
+    composer = new EffectComposer(renderer, rt);
+    composer.setPixelRatio(pixelRatio);
     composer.addPass(new RenderPass(scene, camera));
-    bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.3, 0.55, 0.88);
+    try {
+      // ambient occlusion from the real depth buffer (so alpha-cut leaves occlude correctly)
+      gtao = new GTAOPass(scene, camera, w, h);
+      gtao.setGBuffer(composer.renderTarget1.depthTexture);
+      gtao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 16, distanceFallOff: 1 });
+      gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+      gtao.blendIntensity = 0.85;
+      composer.addPass(gtao);
+    } catch (e) {
+      console.warn('AO disabled', e);
+      gtao = null;
+    }
+    bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.3, 0.6, 0.92);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
+    grade = new ShaderPass(GradeShader);
+    composer.addPass(grade);
   }
 
   // ---------------------------------------------------------------- time of day
@@ -234,6 +270,7 @@ async function main() {
     return tod;
   }
   const sunDir = new THREE.Vector3();
+  const cloudTint = new THREE.Color();
 
   // ---------------------------------------------------------------- DOM story
   const panels = $$('.panel[data-stop]');
@@ -332,6 +369,7 @@ async function main() {
     composer?.setSize(innerWidth, innerHeight);
   });
 
+  const adaptive = !new URLSearchParams(location.search).has('still');
   const clock = new THREE.Clock();
   let frames = 0, fpsT = 0;
   function frame() {
@@ -381,10 +419,12 @@ async function main() {
     sun.intensity = d.si;
     hemi.color.copy(d.sky);
     hemi.groundColor.copy(d.gnd);
-    hemi.intensity = d.hi;
+    hemi.intensity = d.hi * 0.45;
     scene.fog.color.copy(d.fog);
     scene.fog.density = d.fd;
-    scene.environmentIntensity = lerp(1, 0.18, d.night);
+    env.update(current, scene);
+    scene.environmentIntensity = lerp(0.9, 0.55, d.night);
+    if (grade) grade.uniforms.time.value = t;
     renderer.toneMappingExposure = d.exp;
     const n = d.night;
     world.setNight(n);
@@ -394,6 +434,9 @@ async function main() {
     world.sky.moon.position.copy(camera.position).addScaledVector(moonDir, 1200);
     world.sky.moonGlow.position.copy(world.sky.moon.position);
     world.sky.stars.position.copy(camera.position);
+    world.clouds.position.set(camera.position.x, 0, camera.position.z);
+    cloudTint.copy(d.sun).lerp(d.fog, 0.55).multiplyScalar(lerp(1.0, 0.18, n));
+    world.tintClouds(cloudTint, lerp(0.75, 0.25, n));
     if (bloom) bloom.strength = 0.2 + n * 0.45;
 
     for (const lm of landmarks) {
@@ -401,7 +444,7 @@ async function main() {
       lm.update?.(t, near);
       lm.setNight?.(n, clamp(1 - Math.abs(current - 0.42) * 6));
     }
-    for (const u of world.update) u(t);
+    for (const u of world.update) u(t, camera);
 
     updatePanels(current);
     if (composer) composer.render();
@@ -410,12 +453,23 @@ async function main() {
     // adaptive resolution: keep it smooth on modest GPUs
     frames++;
     fpsT += dt;
-    if (fpsT > 1.5) {
+    if (fpsT > 1.5 && adaptive) {
       const fps = frames / fpsT;
-      if (fps < 38 && pixelRatio > 0.75) {
-        pixelRatio = Math.max(0.75, pixelRatio - 0.25);
-        renderer.setPixelRatio(pixelRatio);
-        composer?.setPixelRatio?.(pixelRatio);
+      if (fps < 38) {
+        // shed cost in order of least visible loss: resolution, then AO, then bloom
+        if (pixelRatio > 1) {
+          pixelRatio = Math.max(1, pixelRatio - 0.25);
+          renderer.setPixelRatio(pixelRatio);
+          composer?.setPixelRatio?.(pixelRatio);
+        } else if (gtao && gtao.enabled) {
+          gtao.enabled = false;
+        } else if (bloom && bloom.enabled) {
+          bloom.enabled = false;
+        } else if (pixelRatio > 0.75) {
+          pixelRatio = 0.75;
+          renderer.setPixelRatio(pixelRatio);
+          composer?.setPixelRatio?.(pixelRatio);
+        }
       }
       frames = 0;
       fpsT = 0;
