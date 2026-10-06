@@ -1,14 +1,164 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>piyush_portfolio</title>
-    <script type="module" crossorigin src="./assets/index-DpkF1ows.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-JapKd2MK.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Piyush Pandey · Automation & Data Engineer</title>
+  <meta name="description" content="Piyush Pandey builds SAP bots, data pipelines and analytics that take the boring parts off people's plates. Ride a yellow taxi through ten years of work — from typing invoices to automating a steel plant." />
+  <meta name="theme-color" content="#0d0f13" />
+  <meta property="og:title" content="Piyush Pandey · I teach machines the boring parts." />
+  <meta property="og:description" content="A scroll-driven 3D ride through a career in automation — from a mountain of invoices to bots on the night shift." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://piyush4u.github.io/" />
+  <script>document.documentElement.classList.add("js")</script>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="assets/style.css" />
+  <script type="module" src="assets/app.js"></script>
+</head>
+<body>
+  <canvas id="scene" aria-hidden="true"></canvas>
+  <div class="scrim" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <div id="loader" role="status" aria-live="polite">
+    <div class="loader-inner">
+      <p class="loader-name">Piyush Pandey</p>
+      <p class="loader-line">Every route in this city begins at a tea stall.</p>
+      <div class="loader-track"><div id="loader-bar"></div></div>
+      <p id="loader-note" class="loader-note">Starting…</p>
+    </div>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="#" data-jump="intro" aria-label="Back to start"><span class="brand-mark">PP</span><span class="brand-name">Piyush Pandey</span></a>
+    <a class="top-cta" href="mailto:pandeypiyush7979@gmail.com?subject=Let%27s%20automate%20something">Hire me <span aria-hidden="true">→</span></a>
+    <div class="progress"><div id="progress"></div></div>
+  </header>
+
+  <nav class="rail" aria-label="Chapters">
+    <a href="#intro" data-stop="0"><span>Start</span></a>
+    <a href="#ch1" data-stop="1"><span>2016 · Paper</span></a>
+    <a href="#ch2" data-stop="2"><span>2018 · Numbers</span></a>
+    <a href="#ch3" data-stop="3"><span>2021 · The floor</span></a>
+    <a href="#ch4" data-stop="4"><span>2022 · Machines</span></a>
+    <a href="#work" data-stop="5"><span>Work</span></a>
+    <a href="#tools" data-stop="6"><span>Toolbox</span></a>
+    <a href="#contact" data-stop="7"><span>Contact</span></a>
+  </nav>
+
+  <main class="story">
+    <section class="panel hero" id="intro" data-stop="0">
+      <p class="kicker">Piyush Pandey <i></i> Automation &amp; Data Engineer</p>
+      <h1>I teach machines<br /><em>the boring parts.</em></h1>
+      <p class="lead">Ten years ago I was the one typing invoices into an ERP, one at a time. Today I build the bots that do it for everyone else. This is the road between. Hop in.</p>
+      <p id="scroll-hint" class="hint"><span class="wheel"></span> Scroll to start the ride</p>
+    </section>
+
+    <section class="panel" id="ch1" data-stop="1">
+      <p class="kicker"><b>01</b> 2016 – 2018 <i></i> Emami Frank Ross Ltd.</p>
+      <h2>It began with a <em>mountain of paper.</em></h2>
+      <p class="role">Data Entry Operator</p>
+      <p>Invoices. ERP screens. The same twelve keystrokes, ten thousand times a week. Most people saw a workload. I started seeing a pattern, and every pattern is a program nobody has written yet.</p>
+      <p class="lesson">What it taught me: accuracy is a habit long before it's a feature.</p>
+    </section>
+
+    <section class="panel right" id="ch2" data-stop="2">
+      <p class="kicker"><b>02</b> 2018 – 2020 <i></i> Centrum Insurance Brokers</p>
+      <h2>Then I learned to <em>read the numbers.</em></h2>
+      <p class="role">Quality Analyst · Reporting &amp; KPIs</p>
+      <p>KPI tracking, trend reports, and feedback loops for sales teams. I learned that a dashboard isn't a picture. It's an argument. If it doesn't change a decision on Monday morning, it's decoration.</p>
+      <p class="lesson">What it taught me: data only matters when it moves someone.</p>
+    </section>
+
+    <section class="panel" id="ch3" data-stop="3">
+      <p class="kicker"><b>03</b> 2021 – 2022 <i></i> Apollo Pharmacy</p>
+      <h2>Then I ran <em>the floor.</em></h2>
+      <p class="role">Store In-Charge · Data-Driven Operations</p>
+      <p>Stock, staff, revenue, and someone walking in at 11&nbsp;p.m. who needs medicine <em>now</em>. I ran the store on MIS reports. It taught me the rule I still design by: the real user is a tired human with no time for your clever tool.</p>
+      <p class="lesson">What it taught me: build for the person at the counter, not for the slide deck.</p>
+    </section>
+
+    <section class="panel right wide" id="ch4" data-stop="4">
+      <p class="kicker"><b>04</b> 2022 – Now <i></i> Shyam Metalics &amp; Energy Ltd.</p>
+      <h2>Now I build <em>the machines.</em></h2>
+      <p class="role">Automation &amp; Analytics Developer</p>
+      <p>I joined as an MIS Executive and became the person the plant calls when a process hurts. I build SAP GUI bots that work the night shift, ML models that solve captchas so GST lookups run on their own, scrapers, Power BI dashboards and internal web apps. Steel never sleeps, so the automation doesn't either.</p>
+      <dl class="stats">
+        <div><dt>1,500+</dt><dd>hours handed back to people</dd></div>
+        <div><dt>60%</dt><dd>less manual effort</dd></div>
+        <div><dt>20+</dt><dd>processes rebuilt</dd></div>
+        <div><dt>24/7</dt><dd>bots on shift</dd></div>
+      </dl>
+    </section>
+
+    <section class="panel" id="work" data-stop="5">
+      <p class="kicker"><b>05</b> Selected work <i></i> <span id="proj-count">1 / 4</span></p>
+      <h2>Billboards from <em>the road so far.</em></h2>
+      <div class="projs">
+        <article class="proj on">
+          <p class="cat">Intelligent Automation</p>
+          <h3>Procurement Audit Automation</h3>
+          <p><b>The problem</b> Procurement data was pulled and checked by hand. That meant slow audits and real compliance risk.</p>
+          <p><b>What I built</b> A system that extracts and validates audit data from SAP in real time, so the checks run themselves.</p>
+          <ul><li>Python</li><li>SAP GUI Scripting</li><li>SQL</li></ul>
+        </article>
+        <article class="proj">
+          <p class="cat">Business Intelligence</p>
+          <h3>Vendor Analytics Dashboard</h3>
+          <p><b>The problem</b> Nobody could see how vendors were really performing until something had already gone wrong.</p>
+          <p><b>What I built</b> A vendor intelligence dashboard with performance tracking and anomaly detection that flags supply-chain risk early.</p>
+          <ul><li>Power BI</li><li>DAX</li><li>PostgreSQL</li></ul>
+        </article>
+        <article class="proj">
+          <p class="cat">Data Engineering</p>
+          <h3>SAP Reporting Pipeline</h3>
+          <p><b>The problem</b> Reports lived in a dozen places and were stitched together by hand every cycle.</p>
+          <p><b>What I built</b> One pipeline that pulls, builds and distributes the reports automatically.</p>
+          <ul><li>Python</li><li>SAP</li><li>Data Warehousing</li></ul>
+        </article>
+        <article class="proj">
+          <p class="cat">AI &amp; Data Processing</p>
+          <h3>Document Processing Engine</h3>
+          <p><b>The problem</b> Stacks of physical documents waiting for someone to type them in. (I've been that someone.)</p>
+          <p><b>What I built</b> An OCR and LLM pipeline that reads the paper and turns it into clean, structured data.</p>
+          <ul><li>Python</li><li>OCR</li><li>LLM Integration</li></ul>
+        </article>
+      </div>
+      <p class="aside">Also on the road: ML captcha solvers for GST lookups, an invoice RPA bot that cut manual entry by 95%, and a set of internal web apps for teams that never touch SAP.</p>
+    </section>
+
+    <section class="panel right" id="tools" data-stop="6">
+      <p class="kicker"><b>06</b> The toolbox</p>
+      <h2>Boring tools. <em>Unboring results.</em></h2>
+      <p>Reliable, battle-tested tech instead of whatever is trending this week. Every project follows the same five steps, even when the problems look nothing alike.</p>
+      <ol class="process">
+        <li><b>Understand</b>where the process breaks</li>
+        <li><b>Analyse</b>the data underneath it</li>
+        <li><b>Automate</b>the boring parts</li>
+        <li><b>Optimise</b>until it beats the old way</li>
+        <li><b>Scale</b>without breaking anything</li>
+      </ol>
+      <blockquote>“Automation should make people's jobs better, not just replace them.”</blockquote>
+    </section>
+
+    <section class="panel finale" id="contact" data-stop="7">
+      <p class="kicker"><b>07</b> The bridge to what's next</p>
+      <h2>Got a process that <em>hurts?</em></h2>
+      <p class="lead">Tell me about the spreadsheet everyone dreads, the SAP screen nobody wants to touch, or the report someone rebuilds every Monday. That's where I start building.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="mailto:pandeypiyush7979@gmail.com?subject=Let%27s%20automate%20something">pandeypiyush7979@gmail.com</a>
+        <a class="btn" href="tel:+919875441426">+91 98754 41426</a>
+        <a class="btn" href="https://github.com/Piyush4u" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+      <p class="fine">© 2026 Piyush Pandey · Every building, bolt and taxi in this city is drawn in code. No 3D files were downloaded.</p>
+    </section>
+  </main>
+
+  <div class="scroll-space" aria-hidden="true"></div>
+
+  <noscript><style>#loader{display:none}</style></noscript>
+</body>
 </html>
