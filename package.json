@@ -1,0 +1,14 @@
+{
+  "name": "piyush4u-portfolio",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Scroll-driven 3D storytelling portfolio of Piyush Pandey",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --minify --format=esm --target=es2020 --outfile=assets/app.js",
+    "dev": "esbuild src/main.js --bundle --format=esm --target=es2020 --outfile=assets/app.js --servedir=. --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "three": "0.170.0"
+  }
+}
