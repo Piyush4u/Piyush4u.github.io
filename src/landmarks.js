@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { rng, canvas, tex, radialTexture } from './util.js';
+import { rng, canvas, tex, radialTexture, addGroundGrime } from './util.js';
+import { TEX, pbr } from './materials.js';
+import { metricUV, windowUnit } from './facades.js';
 import { WALK_OUT } from './world.js';
 
 const FONT_SERIF = '"Instrument Serif", Georgia, serif';
@@ -24,30 +26,29 @@ function mesh(geo, mat, x = 0, y = 0, z = 0, parent) {
   if (parent) parent.add(m);
   return m;
 }
+// a box whose UVs are in metres, so tiled PBR materials keep their real scale
+function mbox(w, h, d, tile = 3) {
+  return metricUV(new THREE.BoxGeometry(w, h, d), tile);
+}
+function rot90(mat) {
+  for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+    if (!mat[k]) continue;
+    mat[k] = mat[k].clone();
+    mat[k].center.set(0.5, 0.5);
+    mat[k].rotation = Math.PI / 2;
+    mat[k].needsUpdate = true;
+  }
+  return mat;
+}
+function addWindow(parent, x, y, z, opts) {
+  const w = windowUnit(opts);
+  w.position.set(x, y, z);
+  w.rotation.y = -Math.PI / 2; // unit faces +x; landmarks face +z
+  parent.add(w);
+  return w;
+}
 function local(group, x, z) {
   return new THREE.Vector3(x, 0, z).applyEuler(group.rotation).add(group.position);
-}
-function corrugated(base = '#7d8a93', w = 512) {
-  return tex(
-    canvas(w, w, (c) => {
-      c.fillStyle = base;
-      c.fillRect(0, 0, w, w);
-      for (let x = 0; x < w; x += 8) {
-        const g = c.createLinearGradient(x, 0, x + 8, 0);
-        g.addColorStop(0, 'rgba(255,255,255,0.10)');
-        g.addColorStop(0.5, 'rgba(0,0,0,0.12)');
-        g.addColorStop(1, 'rgba(255,255,255,0.10)');
-        c.fillStyle = g;
-        c.fillRect(x, 0, 8, w);
-      }
-      const r = rng(9);
-      for (let i = 0; i < 60; i++) {
-        c.fillStyle = `rgba(120,70,40,${r() * 0.12})`;
-        c.fillRect(r() * w, r() * w, 4 + r() * 20, 30 + r() * 140);
-      }
-    }),
-    { repeat: true }
-  );
 }
 function signTexture(w, h, draw) {
   return tex(canvas(w, h, draw));
@@ -56,12 +57,12 @@ function signTexture(w, h, draw) {
 // ------------------------------------------------------------ 00 · chai stall (start)
 export function chaiStall() {
   const g = new THREE.Group();
-  const wood = std({ color: 0x6b4a2f, roughness: 0.9 });
-  const tin = std({ color: 0x8c9296, metalness: 0.6, roughness: 0.55, map: corrugated('#8e969b', 256) });
-  mesh(new THREE.BoxGeometry(3.2, 1.1, 1.3), wood, 0, 0.55, 0, g);
+  const wood = pbr('wood', { color: 0x9a7a5a });
+  const tin = pbr('corrugated', { color: 0x9aa0a4 });
+  mesh(mbox(3.2, 1.1, 1.3, 1.5), wood, 0, 0.55, 0, g);
   mesh(new THREE.BoxGeometry(3.4, 0.08, 1.5), std({ color: 0x3a2a1c }), 0, 1.12, 0, g);
   for (const x of [-1.55, 1.55]) for (const z of [-0.6, 0.6]) mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6), wood, x, 1.3, z, g);
-  const roof = mesh(new THREE.BoxGeometry(4, 0.05, 2.4), tin, 0, 2.6, 0.2, g);
+  const roof = mesh(mbox(4, 0.05, 2.4, 2), tin, 0, 2.6, 0.2, g);
   roof.rotation.x = 0.12;
   const kettle = mesh(new THREE.CylinderGeometry(0.16, 0.22, 0.34, 20), std({ color: 0xb87333, metalness: 0.9, roughness: 0.3 }), -0.8, 1.33, 0.1, g);
   mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.1, 16), std({ color: 0x222 }), -0.8, 1.19, 0.1, g);
@@ -99,7 +100,7 @@ export function chaiStall() {
         s.position.set(kettle.position.x + Math.sin(k * 6 + s.userData.o * 9) * 0.15, 1.55 + k * 1.4, kettle.position.z);
         const sc = 0.25 + k * 0.7;
         s.scale.set(sc, sc, 1);
-        s.material.opacity = Math.sin(k * Math.PI) * 0.45;
+        s.material.opacity = Math.sin(k * Math.PI) * 0.22;
       }
     },
   };
@@ -109,15 +110,25 @@ export function chaiStall() {
 export function paperMountain() {
   const g = new THREE.Group();
   const r = rng(101);
-  const wall = std({ color: 0xe3d3b2, roughness: 0.92 });
+  const wall = addGroundGrime(pbr('plaster', { color: 0xead6ae, normalScale: 1.4 }), { height: 3, strength: 0.4 });
   // shop
-  const shop = mesh(new THREE.BoxGeometry(14, 8, 8), wall, 0, 4, -6.5, g);
-  mesh(new THREE.BoxGeometry(14.4, 0.4, 8.4), std({ color: 0x9c907c }), 0, 8.2, -6.5, g);
-  const shutter = mesh(new THREE.PlaneGeometry(6, 3.2), std({ map: corrugated('#7e8486', 256), metalness: 0.5, roughness: 0.6 }), -3, 1.6, -2.48, g);
-  shutter.material.map.repeat.set(2, 1);
-  const doorGlow = std({ color: 0x222, emissive: 0xffd9a0, emissiveIntensity: 0.6 });
+  const shop = mesh(mbox(14, 8, 8), wall, 0, 4, -6.5, g);
+  mesh(mbox(14.5, 0.45, 8.5), pbr('concrete', { color: 0xb8ae9c }), 0, 8.2, -6.5, g);
+  mesh(mbox(14.3, 0.18, 0.3), wall, 0, 4.95, -2.4, g);
+  const shutter = mesh(new THREE.PlaneGeometry(6, 3.2), rot90(pbr('corrugated', { color: 0x8c9499, repeat: [1.6, 3] })), -3, 1.6, -2.48, g);
+  const doorTex = tex(canvas(256, 256, (c, w, h) => {
+    const g = c.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#3a2a1c'); g.addColorStop(1, '#120c08');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    const l = c.createRadialGradient(w * 0.5, h * 0.15, 4, w * 0.5, h * 0.15, w * 0.6);
+    l.addColorStop(0, 'rgba(255,230,180,0.9)'); l.addColorStop(1, 'rgba(255,200,120,0)');
+    c.fillStyle = l; c.fillRect(0, 0, w, h);
+    c.fillStyle = 'rgba(160,130,90,0.5)';
+    for (let i = 0; i < 5; i++) c.fillRect(20 + i * 46, h * 0.45, 34, h * 0.4);
+  }));
+  const doorGlow = std({ map: doorTex, emissive: 0xffffff, emissiveMap: doorTex, emissiveIntensity: 0.35, roughness: 0.3 });
   mesh(new THREE.PlaneGeometry(3.4, 3), doorGlow, 3.6, 1.5, -2.48, g);
-  for (const x of [-4.5, 0, 4.5]) mesh(new THREE.PlaneGeometry(2, 1.8), std({ color: 0x1d252c, roughness: 0.1, metalness: 0.5 }), x, 6, -2.48, g);
+  for (const [i, x] of [-4.5, 0, 4.5].entries()) addWindow(g, x, 6.3, -2.5, { lit: i === 1, shutterColor: '#3f5f7a', open: 0.3 + i * 0.15 });
   const sign = signTexture(1024, 160, (c, w, h) => {
     c.fillStyle = '#1f3b63';
     c.fillRect(0, 0, w, h);
@@ -138,7 +149,7 @@ export function paperMountain() {
   const items = [];
   const kinds = [
     { s: [0.42, 0.11, 0.3], c: [0xf4f2ec, 0xffffff, 0xece6d6] },
-    { s: [0.5, 0.32, 0.36], c: [0xb08a5a, 0x9d7a4d, 0xc19a68] },
+    { s: [0.5, 0.32, 0.36], c: [0xffffff, 0xe8dccb, 0xd9c8b0] },
     { s: [0.32, 0.29, 0.07], c: [0x2a4f8f, 0x8f2a2a, 0x2f7a45, 0x1f1f1f] },
   ];
   for (let gx = -6; gx <= 6; gx++) {
@@ -148,23 +159,48 @@ export function paperMountain() {
       let y = 0;
       const levels = Math.floor(peak * 16 + r() * 2);
       for (let l = 0; l < levels; l++) {
-        const k = kinds[r() < 0.6 ? 0 : r() < 0.6 ? 1 : 2];
+        const ki = r() < 0.6 ? 0 : r() < 0.6 ? 1 : 2;
+        const k = kinds[ki];
         const s = k.s;
-        items.push({ x: cx, y: y + s[1] / 2, z: cz, s, rot: (r() - 0.5) * 0.4, col: k.c[Math.floor(r() * k.c.length)] });
+        items.push({ k: ki, x: cx, y: y + s[1] / 2, z: cz, s, rot: (r() - 0.5) * 0.4, col: ki === 0 ? 0xffffff : k.c[Math.floor(r() * k.c.length)] });
         y += s[1];
       }
     }
   }
-  const im = new THREE.InstancedMesh(new RoundedBoxGeometry(1, 1, 1, 1, 0.02), std({ roughness: 0.85, color: 0xffffff }), items.length);
+  const ream = tex(canvas(128, 128, (c, w, h) => {
+    c.fillStyle = '#f4f2ea'; c.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 2) { c.fillStyle = `rgba(150,145,130,${0.15 + Math.random() * 0.2})`; c.fillRect(0, y, w, 1); }
+    c.fillStyle = '#2c5aa0'; c.fillRect(0, h * 0.35, w, h * 0.3);
+    c.fillStyle = '#fff'; c.font = '700 18px Manrope, sans-serif'; c.fillText('A4 · 75gsm', 10, h * 0.55);
+  }));
+  const kraft = tex(canvas(128, 128, (c, w, h) => {
+    c.fillStyle = '#b08a5a'; c.fillRect(0, 0, w, h);
+    for (let i = 0; i < 900; i++) { c.fillStyle = `rgba(${90 + Math.random() * 60},${60 + Math.random() * 40},30,0.25)`; c.fillRect(Math.random() * w, Math.random() * h, 3, 1); }
+    c.fillStyle = 'rgba(200,180,140,0.7)'; c.fillRect(w * 0.42, 0, w * 0.16, h);
+    c.fillStyle = '#222'; c.font = '700 14px JetBrains Mono, monospace'; c.fillText('FY 2016-17', 8, h - 12);
+  }));
+  const binder = tex(canvas(128, 128, (c, w, h) => {
+    c.fillStyle = '#ffffff'; c.fillRect(0, 0, w, h);
+    c.fillStyle = 'rgba(0,0,0,0.25)'; c.fillRect(0, 0, w, 8); c.fillRect(0, h - 8, w, 8);
+    c.fillStyle = '#f6f1e0'; c.fillRect(w * 0.3, h * 0.25, w * 0.4, h * 0.3);
+    c.beginPath(); c.arc(w / 2, h * 0.78, 9, 0, 7); c.fillStyle = '#222'; c.fill();
+  }));
+  const groups = { 0: [], 1: [], 2: [] };
+  items.forEach((it) => groups[it.k].push(it));
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color();
-  items.forEach((it, i) => {
-    q.setFromEuler(new THREE.Euler(0, it.rot, 0));
-    m4.compose(new THREE.Vector3(it.x, it.y, it.z), q, new THREE.Vector3(...it.s));
-    im.setMatrixAt(i, m4);
-    im.setColorAt(i, c.set(it.col));
+  [[0, ream, 0.75], [1, kraft, 0.9], [2, binder, 0.45]].forEach(([k, map, rough]) => {
+    const list = groups[k];
+    if (!list.length) return;
+    const im = new THREE.InstancedMesh(new RoundedBoxGeometry(1, 1, 1, 2, 0.03), std({ map, roughness: rough, color: 0xffffff }), list.length);
+    list.forEach((it, i) => {
+      q.setFromEuler(new THREE.Euler((Math.random() - 0.5) * 0.04, it.rot, (Math.random() - 0.5) * 0.04));
+      m4.compose(new THREE.Vector3(it.x, it.y, it.z), q, new THREE.Vector3(...it.s));
+      im.setMatrixAt(i, m4);
+      im.setColorAt(i, c.set(it.col));
+    });
+    im.castShadow = im.receiveShadow = true;
+    g.add(im);
   });
-  im.castShadow = im.receiveShadow = true;
-  g.add(im);
 
   // CRT terminal with green ERP text
   const crtCanvas = canvas(256, 192, () => {});
@@ -186,7 +222,7 @@ export function paperMountain() {
   desk.position.set(5.2, 0, 1.4);
   desk.rotation.y = -0.5;
   g.add(desk);
-  mesh(new THREE.BoxGeometry(1.6, 0.06, 0.8), std({ color: 0x5b3b22, roughness: 0.8 }), 0, 0.78, 0, desk);
+  mesh(mbox(1.6, 0.06, 0.8, 1.5), pbr('wood', { color: 0x7a5a3a }), 0, 0.78, 0, desk);
   for (const x of [-0.72, 0.72]) for (const z of [-0.32, 0.32]) mesh(new THREE.BoxGeometry(0.05, 0.78, 0.05), std({ color: 0x3d2817 }), x, 0.39, z, desk);
   mesh(new RoundedBoxGeometry(0.62, 0.52, 0.55, 3, 0.05), std({ color: 0xd8d0bb, roughness: 0.6 }), 0, 1.08, -0.05, desk);
   mesh(new THREE.PlaneGeometry(0.5, 0.38), std({ map: crtTex, emissiveMap: crtTex, emissive: 0xffffff, emissiveIntensity: 1.4 }), 0, 1.1, 0.226, desk);
@@ -241,11 +277,11 @@ export function kpiTower() {
   mesh(new THREE.BoxGeometry(20, H, 20), glassMat, 0, H / 2 + 6, -14, g);
   // podium / lobby
   const lobby = std({ color: 0x1b232a, emissive: 0xfff0d6, emissiveIntensity: 0.5, roughness: 0.2, metalness: 0.4 });
-  mesh(new THREE.BoxGeometry(24, 6, 22), std({ color: 0xc9c4b8, roughness: 0.7 }), 0, 3, -14, g);
+  mesh(mbox(24, 6, 22, 4), addGroundGrime(pbr('concrete', { color: 0xd8d2c6 })), 0, 3, -14, g);
   mesh(new THREE.PlaneGeometry(16, 4.4), lobby, 0, 2.4, -2.98, g);
-  mesh(new THREE.BoxGeometry(22, 0.5, 2.5), std({ color: 0xb4ae9f }), 0, 5.2, -2, g);
+  mesh(mbox(22, 0.5, 2.5, 4), pbr('concrete', { color: 0xc4bdb0 }), 0, 5.2, -2, g);
   // crown
-  mesh(new THREE.BoxGeometry(16, 4, 16), std({ color: 0x2c343c, metalness: 0.8, roughness: 0.3 }), 0, H + 8, -14, g);
+  mesh(mbox(16, 4, 16, 2), pbr('steel', { color: 0x4a525a }), 0, H + 8, -14, g);
   const beacon = std({ color: 0xff2a2a, emissive: 0xff2020, emissiveIntensity: 2 });
   mesh(new THREE.CylinderGeometry(0.1, 0.1, 8), std({ color: 0x777 }), 0, H + 14, -14, g);
   mesh(new THREE.SphereGeometry(0.35, 12, 8), beacon, 0, H + 18.2, -14, g);
@@ -298,7 +334,7 @@ export function kpiTower() {
     st.needsUpdate = true;
   };
   draw(0);
-  mesh(new THREE.BoxGeometry(17, 9.8, 0.5), std({ color: 0x111, metalness: 0.5, roughness: 0.4 }), 0, 13, -3.7, g);
+  mesh(mbox(17, 9.8, 0.5, 2), pbr('steel', { color: 0x2a2e33 }), 0, 13, -3.7, g);
   mesh(new THREE.PlaneGeometry(16.2, 9.1), std({ map: st, emissiveMap: st, emissive: 0xffffff, emissiveIntensity: 1.15, roughness: 0.4 }), 0, 13, -3.44, g);
   let last = -1;
   return {
@@ -318,39 +354,74 @@ export function kpiTower() {
 // ------------------------------------------------------------ 03 · the 24x7 pharmacy
 export function pharmacy() {
   const g = new THREE.Group();
-  const wall = std({ color: 0xf0e8da, roughness: 0.9 });
-  mesh(new THREE.BoxGeometry(16, 11, 10), wall, 0, 5.5, -7, g);
-  mesh(new THREE.BoxGeometry(16.4, 0.5, 10.4), std({ color: 0xa69a86 }), 0, 11.2, -7, g);
+  const wall = addGroundGrime(pbr('plaster', { color: 0xe9e4d8, normalScale: 1.4 }), { height: 3, strength: 0.4 });
+  mesh(mbox(16, 11, 10), wall, 0, 5.5, -7, g);
+  mesh(mbox(16.5, 0.5, 10.5), pbr('concrete', { color: 0xb5ab98 }), 0, 11.2, -7, g);
+  mesh(mbox(16.3, 0.2, 0.3), wall, 0, 9.4, -1.9, g);
   // upstairs windows with green shutters
-  for (const x of [-5.5, -1.8, 1.8, 5.5]) {
-    mesh(new THREE.PlaneGeometry(1.4, 2), std({ color: 0x18222b, roughness: 0.1, metalness: 0.4 }), x, 7.6, -1.98, g);
-    for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(0.6, 2, 0.06), std({ color: 0x3d6b4f }), x + s * 1.05, 7.6, -1.95, g);
-    mesh(new THREE.BoxGeometry(2.4, 0.08, 0.7), std({ color: 0x333 }), x, 6.5, -1.65, g);
-  }
+  for (const [i, x] of [-5.5, -1.8, 1.8, 5.5].entries()) addWindow(g, x, 7.6, -2.0, { lit: i % 2 === 1, shutterColor: '#2f5e44', open: 0.25 + (i % 3) * 0.2 });
   // shop window: lit shelves of medicine
   const shelves = canvas(1024, 384, (c, w, h) => {
     const bg = c.createLinearGradient(0, 0, 0, h);
-    bg.addColorStop(0, '#fffaf0');
-    bg.addColorStop(1, '#e8f3ec');
+    bg.addColorStop(0, '#fbfaf5');
+    bg.addColorStop(1, '#dfe9e2');
     c.fillStyle = bg;
     c.fillRect(0, 0, w, h);
-    const r = rng(31);
-    for (let row = 0; row < 4; row++) {
-      const y = 40 + row * 86;
-      c.fillStyle = '#c8c1b4';
-      c.fillRect(0, y + 62, w, 8);
-      let x = 10;
-      while (x < w - 30) {
-        const bw = 14 + r() * 26, bh = 28 + r() * 32;
-        c.fillStyle = ['#1f9d6a', '#ffffff', '#2b6cb0', '#e85d4a', '#f5c518', '#8e5bd1', '#f1f1f1'][Math.floor(r() * 7)];
-        c.fillRect(x, y + 62 - bh, bw, bh);
-        c.fillStyle = 'rgba(0,0,0,0.12)';
-        c.fillRect(x + bw - 3, y + 62 - bh, 3, bh);
-        x += bw + 2;
-      }
+    // ceiling tube lights
+    for (let x = 60; x < w; x += 240) {
+      const gl = c.createRadialGradient(x + 60, 6, 2, x + 60, 6, 120);
+      gl.addColorStop(0, 'rgba(255,255,255,0.95)');
+      gl.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gl;
+      c.fillRect(x - 60, 0, 240, 120);
     }
-    c.fillStyle = 'rgba(255,255,255,0.18)';
-    c.fillRect(0, 0, w * 0.25, h);
+    const r = rng(31);
+    const brands = ['#1f9d6a', '#ffffff', '#2b6cb0', '#e85d4a', '#f5c518', '#8e5bd1', '#f1f1f1', '#ff8f3a', '#0aa2c0'];
+    for (let row = 0; row < 4; row++) {
+      const y = 46 + row * 84;
+      let x = 6;
+      while (x < w - 30) {
+        const bottle = r() < 0.25;
+        const bw = bottle ? 12 + r() * 8 : 16 + r() * 26, bh = bottle ? 30 + r() * 20 : 24 + r() * 30;
+        const col = brands[Math.floor(r() * brands.length)];
+        const gg = c.createLinearGradient(x, 0, x + bw, 0);
+        gg.addColorStop(0, col);
+        gg.addColorStop(0.75, col);
+        gg.addColorStop(1, 'rgba(0,0,0,0.35)');
+        c.fillStyle = gg;
+        if (bottle) {
+          c.beginPath();
+          c.roundRect(x, y + 62 - bh, bw, bh, 5);
+          c.fill();
+          c.fillStyle = '#ddd';
+          c.fillRect(x + bw * 0.25, y + 62 - bh - 6, bw * 0.5, 7);
+        } else {
+          c.fillRect(x, y + 62 - bh, bw, bh);
+          c.fillStyle = 'rgba(255,255,255,0.85)';
+          c.fillRect(x + 3, y + 62 - bh * 0.62, bw - 6, bh * 0.22);
+          c.fillStyle = 'rgba(0,0,0,0.5)';
+          c.fillRect(x + 4, y + 62 - bh * 0.55, (bw - 8) * r(), 2);
+        }
+        x += bw + 1 + r() * 2;
+      }
+      // shelf edge with price strips & soft shadow under it
+      c.fillStyle = '#c9cfd2';
+      c.fillRect(0, y + 62, w, 7);
+      c.fillStyle = '#ffe35a';
+      for (let px = 20; px < w; px += 90 + r() * 40) c.fillRect(px, y + 63, 26, 5);
+      const sh = c.createLinearGradient(0, y + 69, 0, y + 86);
+      sh.addColorStop(0, 'rgba(0,0,0,0.25)');
+      sh.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = sh;
+      c.fillRect(0, y + 69, w, 17);
+    }
+    // glass reflection streak
+    const gl = c.createLinearGradient(0, 0, w, h);
+    gl.addColorStop(0.1, 'rgba(255,255,255,0)');
+    gl.addColorStop(0.18, 'rgba(255,255,255,0.22)');
+    gl.addColorStop(0.26, 'rgba(255,255,255,0)');
+    c.fillStyle = gl;
+    c.fillRect(0, 0, w, h);
   });
   const shelfTex = tex(shelves);
   const windowMat = std({ map: shelfTex, emissiveMap: shelfTex, emissive: 0xffffff, emissiveIntensity: 0.7, roughness: 0.15, metalness: 0.1 });
@@ -400,15 +471,13 @@ export function pharmacy() {
 export function steelPlant() {
   const g = new THREE.Group();
   const r = rng(404);
-  const shedTex = corrugated('#6f7f8c', 512);
-  shedTex.repeat.set(6, 2);
-  const shedMat = std({ map: shedTex, metalness: 0.55, roughness: 0.55 });
-  const concrete = std({ color: 0x9a948a, roughness: 0.95 });
-  const steel = std({ color: 0x5a6068, metalness: 0.8, roughness: 0.45 });
-  const rust = std({ color: 0x7a4a2e, metalness: 0.5, roughness: 0.8 });
+  const shedMat = pbr('corrugated', { color: 0x8ea2b2, normalScale: 1.4 });
+  const concrete = addGroundGrime(pbr('concrete', { color: 0xc2bcb0 }));
+  const steel = pbr('steel', { color: 0x7d858e });
+  const rust = pbr('steel', { color: 0xb8714a, normalScale: 1.5 });
 
   // yard slab
-  const slab = mesh(new THREE.BoxGeometry(110, 0.2, 80), std({ color: 0x77736c, roughness: 1 }), 0, 0.1, -40, g);
+  const slab = mesh(mbox(110, 0.2, 80, 4), pbr('concrete', { color: 0x9a958c }), 0, 0.1, -40, g);
   slab.castShadow = false;
   // fence + gate
   for (let x = -54; x <= 54; x += 3) {
@@ -419,7 +488,7 @@ export function steelPlant() {
     mesh(new THREE.BoxGeometry(48, 0.05, 0.05), steel, -30, y, -0.5, g);
     mesh(new THREE.BoxGeometry(48, 0.05, 0.05), steel, 30, y, -0.5, g);
   }
-  for (const x of [-6.5, 6.5]) mesh(new THREE.BoxGeometry(1.2, 6, 1.2), concrete, x, 3, -0.5, g);
+  for (const x of [-6.5, 6.5]) mesh(mbox(1.2, 6, 1.2, 2), concrete, x, 3, -0.5, g);
   const gate = signTexture(1024, 150, (c, w, h) => {
     c.fillStyle = '#121518';
     c.fillRect(0, 0, w, h);
@@ -438,15 +507,25 @@ export function steelPlant() {
   const shed = new THREE.Group();
   shed.position.set(-8, 0, -36);
   g.add(shed);
-  mesh(new THREE.BoxGeometry(48, 18, 30), shedMat, 0, 9, 0, shed);
+  mesh(mbox(48, 18, 30, 2), shedMat, 0, 9, 0, shed);
   const roofShape = new THREE.Shape();
   roofShape.moveTo(-15.5, 0); roofShape.lineTo(0, 6); roofShape.lineTo(15.5, 0); roofShape.lineTo(-15.5, 0);
-  const roof = mesh(new THREE.ExtrudeGeometry(roofShape, { depth: 49, bevelEnabled: false }), std({ color: 0x4f5961, metalness: 0.6, roughness: 0.5 }), 24.5, 18, 0, shed);
+  const roof = mesh(new THREE.ExtrudeGeometry(roofShape, { depth: 49, bevelEnabled: false }), pbr('corrugated', { color: 0x7d878e, repeat: [0.5, 0.5] }), 24.5, 18, 0, shed);
   roof.rotation.y = -Math.PI / 2;
   // glowing furnace mouth
-  const mouth = std({ color: 0x1a0a00, emissive: 0xff5a10, emissiveIntensity: 3 });
+  const mouthTex = tex(canvas(256, 256, (c, w, h) => {
+    c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
+    const g = c.createRadialGradient(w / 2, h * 0.7, 4, w / 2, h * 0.7, w * 0.6);
+    g.addColorStop(0, '#fff2c0'); g.addColorStop(0.25, '#ffb040'); g.addColorStop(0.6, '#c43c08'); g.addColorStop(1, '#100400');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+  }));
+  const mouth = std({ color: 0x050200, emissive: 0xffffff, emissiveMap: mouthTex, emissiveIntensity: 2.2 });
   mesh(new THREE.PlaneGeometry(10, 8), mouth, -6, 4, 15.02, shed);
-  mesh(new THREE.PlaneGeometry(40, 1.4), std({ color: 0x0b0d10, emissive: 0xffd7a0, emissiveIntensity: 0.4 }), 0, 15, 15.02, shed);
+  const clere = tex(canvas(512, 32, (c, w, h) => {
+    c.fillStyle = '#1a1e22'; c.fillRect(0, 0, w, h);
+    for (let x = 0; x < w; x += 16) { c.fillStyle = `rgba(150,170,180,${0.25 + Math.random() * 0.2})`; c.fillRect(x + 2, 3, 12, h - 6); }
+  }));
+  mesh(new THREE.PlaneGeometry(40, 1.4), std({ map: clere, roughness: 0.2, metalness: 0.3, emissive: 0xffd7a0, emissiveMap: clere, emissiveIntensity: 0.15 }), 0, 15, 15.02, shed);
 
   // chimneys
   const stripe = tex(
@@ -459,7 +538,7 @@ export function steelPlant() {
   const chimneyTops = [];
   [[18, -58], [26, -60], [34, -56]].forEach(([x, z], i) => {
     const h = 46 + i * 4;
-    mesh(new THREE.CylinderGeometry(1.3, 2.2, h, 24), std({ map: stripe, roughness: 0.85 }), x, h / 2, z, g);
+    mesh(new THREE.CylinderGeometry(1.3, 2.2, h, 24), std({ map: stripe, normalMap: TEX.concrete_nor, roughnessMap: TEX.concrete_orm, roughness: 1 }), x, h / 2, z, g);
     chimneyTops.push(new THREE.Vector3(x, h + 0.5, z));
   });
   // blast furnace
@@ -477,7 +556,7 @@ export function steelPlant() {
   for (let i = 0; i < 5; i++) mesh(new THREE.TorusGeometry(5.6, 0.25, 8, 40), steel, 0, 3 + i * 4.5, 0, bf).rotation.x = Math.PI / 2;
   // silos
   for (const [x, z] of [[-40, -28], [-40, -42], [-48, -35]]) {
-    mesh(new THREE.CylinderGeometry(4, 4, 18, 28), std({ color: 0xcfd3d6, metalness: 0.7, roughness: 0.35 }), x, 9, z, g);
+    mesh(new THREE.CylinderGeometry(4, 4, 18, 28), std({ color: 0xcfd3d6, metalness: 0.8, roughness: 0.32, normalMap: TEX.steel_nor }), x, 9, z, g);
     mesh(new THREE.ConeGeometry(4.1, 3, 28), std({ color: 0xb9bec2, metalness: 0.7, roughness: 0.35 }), x, 19.5, z, g);
   }
   // big overhead pipe rack
@@ -488,8 +567,8 @@ export function steelPlant() {
   const conv = new THREE.Group();
   conv.position.set(0, 0, -8);
   g.add(conv);
-  mesh(new THREE.BoxGeometry(44, 0.25, 2), std({ color: 0x1b1d20, roughness: 0.6 }), 0, 1.3, 0, conv);
-  for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(44, 0.35, 0.12), std({ color: 0xd9a400, roughness: 0.5 }), 0, 1.45, s * 1.05, conv);
+  mesh(new THREE.BoxGeometry(44, 0.25, 2), std({ color: 0x1b1d20, roughness: 0.75, normalMap: TEX.asphalt_nor }), 0, 1.3, 0, conv);
+  for (const s of [-1, 1]) mesh(mbox(44, 0.35, 0.12, 2), pbr('steel', { color: 0xf0b400 }), 0, 1.45, s * 1.05, conv);
   for (let x = -21; x <= 21; x += 3) for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(0.15, 1.2, 0.15), steel, x, 0.6, s * 0.9, conv);
   const ingotMat = std({ color: 0x220800, emissive: 0xff3c00, emissiveIntensity: 5, roughness: 0.6 });
   const ingots = new THREE.InstancedMesh(new RoundedBoxGeometry(1.4, 0.35, 0.8, 2, 0.06), ingotMat, 16);
@@ -501,7 +580,7 @@ export function steelPlant() {
 
   // two robot arms
   const arms = [];
-  const orange = std({ color: 0xff7a1a, metalness: 0.35, roughness: 0.38 });
+  const orange = new THREE.MeshPhysicalMaterial({ color: 0xff6a0a, metalness: 0.2, roughness: 0.35, clearcoat: 0.6, clearcoatRoughness: 0.2 });
   const dark = std({ color: 0x222428, metalness: 0.6, roughness: 0.4 });
   for (const [x, ph] of [[-9, 0], [9, 1.9]]) {
     const base = new THREE.Group();
@@ -541,6 +620,16 @@ export function steelPlant() {
       smoke.push(s);
     }
   });
+  // sparks spitting from the furnace mouth
+  const SP = 140;
+  const spGeo = new THREE.BufferGeometry();
+  const spPos = new Float32Array(SP * 3);
+  const spVel = [];
+  for (let i = 0; i < SP; i++) spVel.push({ t: Math.random(), vx: (Math.random() - 0.5) * 4, vy: 2 + Math.random() * 4, vz: 2 + Math.random() * 3 });
+  spGeo.setAttribute('position', new THREE.BufferAttribute(spPos, 3));
+  const sparks = new THREE.Points(spGeo, new THREE.PointsMaterial({ color: 0xffb347, size: 0.09, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+  sparks.position.set(shed.position.x - 6, 1.2, shed.position.z + 15.2);
+  g.add(sparks);
   const m4 = new THREE.Matrix4();
   return {
     group: g,
@@ -562,6 +651,15 @@ export function steelPlant() {
         ingots.setMatrixAt(i, m4);
       }
       ingots.instanceMatrix.needsUpdate = true;
+      for (let i = 0; i < SP; i++) {
+        const v = spVel[i];
+        const k = (t * 0.7 + v.t) % 1;
+        const tt = k * 1.2;
+        spPos[i * 3] = v.vx * tt;
+        spPos[i * 3 + 1] = Math.max(0, v.vy * tt - 4.9 * tt * tt);
+        spPos[i * 3 + 2] = v.vz * tt;
+      }
+      spGeo.attributes.position.needsUpdate = true;
       for (const a of arms) {
         const k = t * 0.9 + a.ph;
         a.yaw.rotation.y = Math.sin(k) * 1.1;
@@ -569,7 +667,7 @@ export function steelPlant() {
         a.el.rotation.z = 1.25 + Math.sin(k * 1.3 + 1) * 0.35;
         a.wr.rotation.y = k * 2;
       }
-      mouth.emissiveIntensity = 2.6 + Math.sin(t * 7) * 0.3 + Math.sin(t * 13) * 0.2;
+      mouth.emissiveIntensity = 2.0 + Math.sin(t * 7) * 0.25 + Math.sin(t * 13) * 0.15;
     },
     setNight(n, dusk) { glow.intensity = 30 + dusk * 80; },
   };
@@ -628,7 +726,7 @@ export function billboard(p, i) {
     }
   });
   const t = tex(c);
-  const frame = std({ color: 0x1e2226, metalness: 0.7, roughness: 0.4 });
+  const frame = pbr('steel', { color: 0x3a4046 });
   for (const x of [-2.8, 2.8]) mesh(new THREE.BoxGeometry(0.3, 6, 0.3), frame, x, 3, -0.2, g);
   mesh(new THREE.BoxGeometry(9.2, 5.3, 0.35), frame, 0, 8.2, -0.25, g);
   const screen = std({ map: t, emissiveMap: t, emissive: 0xffffff, emissiveIntensity: 0.9, roughness: 0.35 });
@@ -645,17 +743,8 @@ export function toolCrates(tools) {
   const plank = (label, sub) =>
     tex(
       canvas(256, 256, (c, w) => {
-        c.fillStyle = '#b48a55';
-        c.fillRect(0, 0, w, w);
-        for (let i = 0; i < 5; i++) {
-          c.fillStyle = `rgba(${90 + r() * 30},${60 + r() * 20},30,0.35)`;
-          c.fillRect(0, i * 51, w, 3);
-          for (let k = 0; k < 40; k++) {
-            c.fillStyle = 'rgba(70,45,20,0.12)';
-            c.fillRect(r() * w, i * 51 + r() * 50, 30 + r() * 60, 1);
-          }
-        }
-        c.strokeStyle = '#6e4d26';
+        c.drawImage(TEX.wood_col.image, 0, 0, w, w);
+        c.strokeStyle = 'rgba(70,45,22,0.85)';
         c.lineWidth = 16;
         c.strokeRect(8, 8, w - 16, w - 16);
         c.beginPath(); c.moveTo(16, 16); c.lineTo(w - 16, w - 16); c.stroke();
@@ -674,14 +763,14 @@ export function toolCrates(tools) {
         }
       })
     );
-  const side = std({ map: plank(), roughness: 0.9 });
+  const side = pbr('wood', { repeat: [1, 1] });
   const S = 1.5;
   const rows = [5, 4, 3];
   let k = 0;
   rows.forEach((n, row) => {
     for (let i = 0; i < n && k < tools.length; i++, k++) {
       const [name, sub] = tools[k];
-      const front = std({ map: plank(name, sub), roughness: 0.85 });
+      const front = std({ map: plank(name, sub), normalMap: TEX.wood_nor, roughness: 0.85 });
       const m = mesh(new THREE.BoxGeometry(S, S, S), [side, side, side, side, front, side], (i - (n - 1) / 2) * (S + 0.06), S / 2 + row * S, (r() - 0.5) * 0.15, g);
       m.rotation.y = (r() - 0.5) * 0.12;
     }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { canvas, tex, radialTexture } from './util.js';
+import { canvas, tex, radialTexture, addGroundGrime } from './util.js';
 
 // A hand-modelled Hindustan Ambassador — the yellow Kolkata taxi.
 // Built in "profile space" (x = length, forward; y = up; z = width),
@@ -46,6 +46,21 @@ function extrude(shape, depth, bevel = 0.07, seg = 5) {
   });
   g.translate(0, 0, -depth / 2);
   g.computeVertexNormals();
+  return g;
+}
+
+// Bend the normals of the flat side panels so light and reflections roll over
+// them like the Ambassador's rounded flanks (and the greenhouse's tumblehome).
+function roundSides(g, { yMid = 0.78, ky = 0.9, kx = 0.18, lean = 0 } = {}) {
+  const p = g.attributes.position, n = g.attributes.normal;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < n.count; i++) {
+    const nz = n.getZ(i);
+    if (Math.abs(nz) < 0.85) continue;
+    const x = p.getX(i), y = p.getY(i);
+    v.set(Math.sign(x) * Math.pow(Math.abs(x) / 2.2, 3) * kx, (y - yMid) * ky + lean, Math.sign(nz)).normalize();
+    n.setXYZ(i, v.x, v.y, v.z);
+  }
   return g;
 }
 
@@ -101,13 +116,16 @@ export function buildTaxi({ lights = true, color = 0xf2bd1b } = {}) {
   body.add(prof);
   root.add(body);
 
-  const paint = new THREE.MeshPhysicalMaterial({
-    color, roughness: 0.3, metalness: 0.08, clearcoat: 1, clearcoatRoughness: 0.06,
-  });
+  const paint = addGroundGrime(new THREE.MeshPhysicalMaterial({
+    color, roughness: 0.34, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.2,
+  }), { height: 0.95, strength: 0.32 });
   const chrome = new THREE.MeshStandardMaterial({ color: 0xe9ecef, metalness: 1, roughness: 0.14 });
   const glass = new THREE.MeshPhysicalMaterial({
-    color: 0x0b1116, metalness: 0.4, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6,
+    color: 0x1c2a2e, metalness: 0.0, roughness: 0.02, envMapIntensity: 1.1, transparent: true, opacity: 0.34,
+    specularIntensity: 1, ior: 1.52, depthWrite: false,
   });
+  const vinyl = new THREE.MeshStandardMaterial({ color: 0x2a1714, roughness: 0.45 });
+  const cabin = new THREE.MeshStandardMaterial({ color: 0x15130f, roughness: 0.8 });
   const black = new THREE.MeshStandardMaterial({ color: 0x0c0c0d, roughness: 0.7 });
   const rubber = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.92 });
   const headLens = new THREE.MeshStandardMaterial({
@@ -128,11 +146,11 @@ export function buildTaxi({ lights = true, color = 0xf2bd1b } = {}) {
   };
 
   // Shell
-  add(extrude(profileShape(), W - 0.14, 0.07, 6), paint);
+  add(roundSides(extrude(profileShape(), W - 0.14, 0.07, 6)), paint);
   // Greenhouse glass
   const gh = new THREE.Shape();
   gh.moveTo(-1.22, 1.0); gh.lineTo(-0.95, 1.47); gh.lineTo(0.42, 1.49); gh.lineTo(0.84, 1.0); gh.lineTo(-1.22, 1.0);
-  add(extrude(gh, W - 0.3, 0.035, 3), glass);
+  add(roundSides(extrude(gh, W - 0.3, 0.035, 3), { yMid: 1.0, ky: 0.2, kx: 0.05, lean: 0.3 }), glass);
   // Roof cap & pillars
   add(new RoundedBoxGeometry(1.5, 0.08, W - 0.2, 3, 0.035), paint, -0.27, 1.5, 0);
   const zg = (W - 0.24) / 2;
@@ -186,6 +204,47 @@ export function buildTaxi({ lights = true, color = 0xf2bd1b } = {}) {
   pr.rotation.y = -Math.PI / 2;
   // Underbody
   add(new THREE.BoxGeometry(3.7, 0.22, W - 0.24), black, 0, 0.42, 0, false);
+
+  // Cabin: bench seats, dash, steering wheel and a driver (India drives on the left, wheel on the right)
+  add(new THREE.BoxGeometry(2.3, 0.05, W - 0.3), cabin, -0.25, 0.64, 0, false);
+  add(new THREE.BoxGeometry(2.1, 0.03, W - 0.34), cabin, -0.27, 1.43, 0, false);
+  for (const [sx, bx] of [[0.12, -0.14], [-0.86, -1.12]]) {
+    add(new RoundedBoxGeometry(0.52, 0.2, W - 0.36, 3, 0.06), vinyl, sx, 0.78, 0, false);
+    add(new RoundedBoxGeometry(0.14, 0.5, W - 0.36, 3, 0.05), vinyl, bx, 1.07, 0, false).rotation.z = 0.12;
+  }
+  add(new RoundedBoxGeometry(0.34, 0.22, W - 0.3, 2, 0.05), cabin, 0.72, 0.98, 0, false);
+  const wheelG = new THREE.TorusGeometry(0.19, 0.018, 8, 32);
+  wheelG.rotateY(Math.PI / 2);
+  add(wheelG, black, 0.46, 1.1, 0.36, false).rotation.z = 0.45;
+  add(new THREE.CylinderGeometry(0.02, 0.02, 0.3, 8).rotateZ(Math.PI / 2 - 0.45), black, 0.6, 1.04, 0.36, false);
+  const shirt = new THREE.MeshStandardMaterial({ color: 0xd8d2c0, roughness: 0.85 });
+  const skin = new THREE.MeshStandardMaterial({ color: 0x7a4e33, roughness: 0.55 });
+  add(new RoundedBoxGeometry(0.26, 0.5, 0.4, 3, 0.1), shirt, 0.02, 1.1, 0.36, false);
+  add(new THREE.SphereGeometry(0.105, 20, 14), skin, 0.06, 1.45, 0.36, false).scale.set(1, 1.15, 0.95);
+  add(new THREE.SphereGeometry(0.11, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x14100d, roughness: 0.9 }), 0.05, 1.48, 0.36, false);
+  for (const z of [0.22, 0.5]) add(new THREE.CylinderGeometry(0.035, 0.035, 0.42, 8).rotateZ(Math.PI / 2 - 0.5), shirt, 0.26, 1.16, z, false);
+  // Old mechanical flag-meter on the left of the windscreen
+  add(new RoundedBoxGeometry(0.14, 0.16, 0.1, 2, 0.02), new THREE.MeshStandardMaterial({ color: 0x5e1212, roughness: 0.45 }), 0.78, 1.18, -(W / 2) - 0.02, true);
+  add(new THREE.BoxGeometry(0.015, 0.1, 0.07), new THREE.MeshStandardMaterial({ color: 0xd8d4c8 }), 0.8, 1.32, -(W / 2) - 0.02, false);
+  // Roof carrier
+  const rack = new THREE.MeshStandardMaterial({ color: 0xc9ccd0, metalness: 1, roughness: 0.28 });
+  for (const z of [-0.62, 0.62]) {
+    add(new THREE.CylinderGeometry(0.018, 0.018, 1.4, 10).rotateZ(Math.PI / 2), rack, -0.27, 1.64, z);
+    for (const x of [-0.9, 0.35]) add(new THREE.CylinderGeometry(0.014, 0.014, 0.12, 8), rack, x, 1.58, z);
+  }
+  for (const x of [-0.85, -0.27, 0.3]) add(new THREE.CylinderGeometry(0.014, 0.014, 1.24, 8).rotateX(Math.PI / 2), rack, x, 1.64, 0);
+  // Rain gutters, wipers, aerial
+  for (const z of [-zg - 0.04, zg + 0.04]) add(new THREE.BoxGeometry(1.5, 0.02, 0.02), chrome, -0.27, 1.47, z, false);
+  for (const z of [-0.32, 0.22]) {
+    const w = add(new THREE.BoxGeometry(0.012, 0.012, 0.42), black, 0.86, 1.07, z, false);
+    w.rotation.x = 0.25;
+  }
+  add(new THREE.CylinderGeometry(0.004, 0.006, 0.9, 6), chrome, 1.5, 1.45, -0.7, false).rotation.z = -0.25;
+  // Black arch liners so you can't see daylight through the wheel wells
+  const arch = new THREE.CylinderGeometry(0.42, 0.42, W - 0.12, 20, 1, true, Math.PI / 2, Math.PI);
+  arch.rotateX(Math.PI / 2);
+  const archMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, side: THREE.BackSide });
+  for (const x of [1.35, -1.35]) add(arch, archMat, x, 0.36, 0, false);
 
   // Wheels
   const wheels = [];
