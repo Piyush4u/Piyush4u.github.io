@@ -12,6 +12,7 @@ import { loadTextures } from './materials.js';
 import { clamp, lerp, smooth, easeInOut, remap, nextFrame } from './util.js';
 import { buildRoute, buildWorld, buildBridge, RIVER, WALK_OUT } from './world.js';
 import { buildTaxi } from './taxi.js';
+import { loadCar } from './car.js';
 import { place, chaiStall, paperMountain, kpiTower, pharmacy, steelPlant, billboard, toolCrates } from './landmarks.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -196,7 +197,15 @@ async function main() {
   const bridge = buildBridge(scene, route);
 
   // the hero
-  const taxi = buildTaxi({ lights: true });
+  // the hero car (falls back to the hand-built Ambassador if the model can't load)
+  setLoad(0.7, 'Rolling the Camaro out…');
+  let taxi;
+  try {
+    taxi = await loadCar((k) => setLoad(0.7 + k * 0.08, 'Rolling the Camaro out…'));
+  } catch (e) {
+    console.warn('Car model failed, using the Ambassador', e);
+    taxi = buildTaxi({ lights: true });
+  }
   scene.add(taxi.root);
   // a few parked cousins
   const parked = [];

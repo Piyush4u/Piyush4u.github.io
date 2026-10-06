@@ -233,8 +233,8 @@ def asphalt(n=2048):
 
     # puddles near the gutters (wet = dark & glossy)
     gutter = np.repeat(np.exp(-((u - 0.02) / 0.06) ** 2) + np.exp(-((u - 0.98) / 0.06) ** 2), n, 0)
-    puddle = smoothstep(0.58, 0.66, big * 0.7 + gutter * 0.5)
-    col = lerp(col, col * 0.55, (puddle * 0.8)[..., None])
+    puddle = smoothstep(0.62, 0.7, big * 0.75 + gutter * 0.35)
+    col = lerp(col, col * 0.7, (puddle * 0.7)[..., None])
 
     # markings: edge lines + yellow centre dashes, worn
     paint = np.zeros((n, n))
@@ -255,8 +255,8 @@ def asphalt(n=2048):
     col = col * (1 - cr[..., None] * 0.6)
 
     height = stones * 0.5 * worn + fine * 0.25 - cr * 0.8 + (paint + ycol) * 0.15 - puddle * 0.3
-    rough = 0.9 - stones * 0.08 - puddle * 0.82 - oil * 0.25 - lanes * 0.08 - (paint + ycol) * 0.25
-    write_set('asphalt', col, height, 5.0, np.clip(rough, 0.04, 1), q=82)
+    rough = 0.9 - stones * 0.08 - puddle * 0.6 - oil * 0.25 - lanes * 0.08 - (paint + ycol) * 0.25
+    write_set('asphalt', col, height, 5.0, np.clip(rough, 0.22, 1), q=82)
 
 
 def pavers(n=1024):

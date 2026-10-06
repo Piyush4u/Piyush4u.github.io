@@ -102,7 +102,7 @@ function shopTexture() {
       bg.addColorStop(1, '#c79a62');
       c.fillStyle = bg;
       c.fillRect(0, 0, w, h);
-      const pal = ['#d63a2f', '#f2c200', '#2b6cb0', '#2f8f4f', '#ffffff', '#ff8a00', '#7a3fb0', '#e9e1d0'];
+      const pal = ['#a8483c', '#c9a43a', '#3e6690', '#4a7a58', '#e8e2d4', '#c07a3a', '#6a5080', '#d9d0bf', '#8a8478'];
       for (let row = 0; row < 4; row++) {
         const y = 18 + row * 52;
         c.fillStyle = '#6b4a2a';
@@ -117,6 +117,12 @@ function shopTexture() {
           x += bw + 1.5;
         }
       }
+      // falloff toward the edges & floor, like a real tube-lit shop
+      const v = c.createRadialGradient(w / 2, h * 0.3, h * 0.2, w / 2, h * 0.4, w * 0.6);
+      v.addColorStop(0, 'rgba(0,0,0,0)');
+      v.addColorStop(1, 'rgba(20,12,4,0.55)');
+      c.fillStyle = v;
+      c.fillRect(0, 0, w, h);
       // counter
       c.fillStyle = '#4a3020';
       c.fillRect(0, h - 40, w, 40);

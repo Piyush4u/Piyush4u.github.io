@@ -276,7 +276,17 @@ export function kpiTower() {
   const H = 74;
   mesh(new THREE.BoxGeometry(20, H, 20), glassMat, 0, H / 2 + 6, -14, g);
   // podium / lobby
-  const lobby = std({ color: 0x1b232a, emissive: 0xfff0d6, emissiveIntensity: 0.5, roughness: 0.2, metalness: 0.4 });
+  const lobbyTex = tex(canvas(512, 160, (c, w, h) => {
+    const g = c.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#f6ead2'); g.addColorStop(0.5, '#7a6a58'); g.addColorStop(1, '#2a241e');
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    for (let x = 30; x < w; x += 90) { const l = c.createRadialGradient(x, 6, 2, x, 6, 60); l.addColorStop(0, 'rgba(255,255,255,0.9)'); l.addColorStop(1, 'rgba(255,255,255,0)'); c.fillStyle = l; c.fillRect(x - 60, 0, 120, 70); }
+    c.fillStyle = 'rgba(30,24,18,0.8)'; c.fillRect(w * 0.38, h * 0.55, w * 0.24, h * 0.3);
+    c.fillStyle = 'rgba(20,20,20,0.9)';
+    for (let x = 0; x <= w; x += w / 8) c.fillRect(x - 3, 0, 6, h);
+    c.fillRect(0, h * 0.18, w, 4);
+  }));
+  const lobby = new THREE.MeshPhysicalMaterial({ map: lobbyTex, emissive: 0xffffff, emissiveMap: lobbyTex, emissiveIntensity: 0.3, roughness: 0.05, metalness: 0.1, envMapIntensity: 1.4 });
   mesh(mbox(24, 6, 22, 4), addGroundGrime(pbr('concrete', { color: 0xd8d2c6 })), 0, 3, -14, g);
   mesh(new THREE.PlaneGeometry(16, 4.4), lobby, 0, 2.4, -2.98, g);
   mesh(mbox(22, 0.5, 2.5, 4), pbr('concrete', { color: 0xc4bdb0 }), 0, 5.2, -2, g);
@@ -347,7 +357,7 @@ export function kpiTower() {
       if (k !== last) { last = k; draw(t); }
       beacon.emissiveIntensity = 1 + Math.max(0, Math.sin(t * 3)) * 4;
     },
-    setNight(n) { glassMat.emissiveIntensity = n * 0.6; lobby.emissiveIntensity = 0.5 + n * 1.5; },
+    setNight(n) { glassMat.emissiveIntensity = n * 0.6; lobby.emissiveIntensity = 0.3 + n * 0.8; },
   };
 }
 
