@@ -595,6 +595,30 @@ async function main() {
     requestAnimationFrame(frame);
   }
 
+  // keep the lens out of the canopy: drop any kit tree the camera rig flies through
+  if (assets?.trees) {
+    const path = [], fr = {};
+    for (let i = 0; i <= 800; i++) {
+      const tl = timeline(i / 800);
+      route.frame(tl.u, fr);
+      path.push(toWorld(cameraShot(tl).pos, fr, new THREE.Vector3()));
+    }
+    const pos = new THREE.Vector3(), zero = new THREE.Vector3(), gone = new THREE.Matrix4();
+    for (const pf of assets.trees) {
+      const drop = new Set();
+      pf.instances.forEach((m, i) => {
+        pos.setFromMatrixPosition(m);
+        if (path.some((c) => Math.hypot(c.x - pos.x, c.z - pos.z) < 4.5)) drop.add(i);
+      });
+      if (!drop.size) continue;
+      for (const p of pf.parts) for (const im of p.meshes || []) {
+        im.userData.indices.forEach((src, j) => { if (drop.has(src)) im.setMatrixAt(j, gone.copy(pf.instances[src]).scale(zero)); });
+        im.instanceMatrix.needsUpdate = true;
+        im.computeBoundingSphere();
+      }
+    }
+  }
+
   setLoad(0.92, 'Warming up the GPU…');
   await nextFrame();
   const culler = new DistanceCuller(scene);
