@@ -1,0 +1,25 @@
+# Everyone is welcome, search engines and AI assistants alike.
+User-agent: *
+Allow: /
+
+# Named explicitly so there is no doubt: AI search and answer engines may read this site.
+User-agent: GPTBot
+Allow: /
+User-agent: OAI-SearchBot
+Allow: /
+User-agent: ChatGPT-User
+Allow: /
+User-agent: ClaudeBot
+Allow: /
+User-agent: Claude-SearchBot
+Allow: /
+User-agent: PerplexityBot
+Allow: /
+User-agent: Google-Extended
+Allow: /
+User-agent: Bingbot
+Allow: /
+User-agent: Applebot
+Allow: /
+
+Sitemap: https://piyush4u.github.io/sitemap.xml
