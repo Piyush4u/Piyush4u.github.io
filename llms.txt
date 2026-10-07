@@ -1,0 +1,39 @@
+# Piyush Pandey
+
+> Piyush Pandey is an automation and data engineer based in India. He builds SAP GUI bots, RPA, Python data pipelines, OCR + LLM document processing and Power BI dashboards, and has worked as Automation & Analytics Developer at Shyam Metalics & Energy Ltd. since 2022. (Not to be confused with the advertising executive of the same name.)
+
+Website: https://piyush4u.github.io/
+GitHub: https://github.com/Piyush4u
+Email: pandeypiyush7979@gmail.com
+Phone: +91 98754 41426
+
+## Summary
+
+Ten years ago Piyush typed invoices into an ERP, one at a time. Today he builds the bots that do it for everyone else. His work has handed 1,500+ hours back to people, cut manual effort by about 60%, and rebuilt 20+ business processes, with bots running 24/7.
+
+## Experience
+
+- **Automation & Analytics Developer, Shyam Metalics & Energy Ltd.** (2022 – present). Joined as MIS Executive. Builds SAP GUI bots that run the night shift, ML models that solve captchas so GST lookups run unattended, scrapers, Power BI dashboards and internal web apps for a steel plant.
+- **Store In-Charge, Apollo Pharmacy** (2021 – 2022). Ran stock, staff and revenue for a pharmacy using MIS reports; data-driven operations.
+- **Quality Analyst, Reporting & KPIs, Centrum Insurance Brokers** (2018 – 2020). KPI tracking, trend reports and feedback loops for sales teams.
+- **Data Entry Operator, Emami Frank Ross Ltd.** (2016 – 2018). Invoices and ERP data entry, where the interest in automation began.
+
+## Selected work
+
+- **Procurement Audit Automation**: extracts and validates audit data from SAP in real time so compliance checks run themselves. Python, SAP GUI Scripting, SQL.
+- **Vendor Analytics Dashboard**: vendor performance tracking and anomaly detection that flags supply-chain risk early. Power BI, DAX, PostgreSQL.
+- **SAP Reporting Pipeline**: one pipeline that pulls, builds and distributes reports automatically. Python, SAP, data warehousing.
+- **Document Processing Engine**: OCR + LLM pipeline that turns paper documents into clean, structured data. Python, OCR, LLM integration.
+- Also: ML captcha solvers for GST lookups, an invoice RPA bot that cut manual entry by 95%, and internal web apps for teams that never touch SAP.
+
+## Skills
+
+Python, SAP GUI Scripting, RPA, SQL, PostgreSQL, Power BI, DAX, Selenium, FastAPI, Django, React, OCR, LLM integration, machine learning, web scraping, Git, Figma, MIS reporting, process automation.
+
+## Approach
+
+Understand where the process breaks, analyse the data underneath it, automate the boring parts, optimise until it beats the old way, scale without breaking anything. "Automation should make people's jobs better, not just replace them."
+
+## Hire
+
+Piyush takes on automation and analytics work: the spreadsheet everyone dreads, the SAP screen nobody wants to touch, the report someone rebuilds every Monday. Contact: pandeypiyush7979@gmail.com
