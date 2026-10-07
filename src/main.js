@@ -23,9 +23,13 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const loaderBar = $('#loader-bar');
 const loaderNote = $('#loader-note');
 const T0 = performance.now();
+let loadShown = 0;
 const setLoad = (p, note) => {
   if (location.search.includes('debug')) console.log('STAGE', (performance.now() - T0).toFixed(0), p, note);
-  if (loaderBar) loaderBar.style.transform = `scaleX(${p})`;
+  // parallel jobs report out of order: the bar only ever moves forward
+  if (p <= loadShown && !note) return;
+  loadShown = Math.max(loadShown, p);
+  if (loaderBar) loaderBar.style.transform = `scaleX(${loadShown})`;
   if (note && loaderNote) loaderNote.textContent = note;
 };
 
@@ -205,7 +209,7 @@ async function main() {
     return lm;
   };
 
-  setLoad(0.3, 'Raising landmarks…');
+  setLoad(0.38, 'Raising landmarks…');
   await nextFrame();
   addLandmark(chaiStall(), STOPS[0].u - 0.004, 1, WALK_OUT - 1.3);
   addLandmark(paperMountain(), STOPS[1].u + 0.004, 1, WALK_OUT + 2.6);
@@ -225,7 +229,7 @@ async function main() {
   const world = buildWorld(scene, route, exclusions, { isMobile, tier }, assets);
   setLoad(0.65, 'Bolting the bridge…');
   await nextFrame();
-  const bridge = buildBridge(scene, route);
+  const bridge = buildBridge(scene, route, { shimmer: !world.water });
 
   // the hero
   // the hero car (falls back to the hand-built Ambassador if the model can't load)
@@ -542,6 +546,7 @@ async function main() {
     renderer.toneMappingExposure = d.exp;
     const n = d.night;
     world.setNight(n);
+    world.lightWater(lightDir, d.sun, d.si, d.sky, d.hi, n);
     bridge.setNight(n);
     taxi.setNight(clamp(n * 1.3));
     world.sky.moon.position.copy(camera.position).addScaledVector(moonDir, 590);
@@ -619,12 +624,15 @@ async function main() {
     }
   }
 
-  setLoad(0.92, 'Warming up the GPU…');
+  setLoad(0.84, 'Warming up the GPU…');
   await nextFrame();
   const culler = new DistanceCuller(scene);
   // compile every shader and upload every mesh and texture now, not mid-scroll
   renderer.shadowMap.needsUpdate = true;
-  await warmUp(renderer, scene, camera, () => { renderer.shadowMap.needsUpdate = true; });
+  await warmUp(renderer, scene, camera, {
+    extra: () => { renderer.shadowMap.needsUpdate = true; },
+    onProgress: (k) => setLoad(0.84 + k * 0.15),
+  });
   if (composer) composer.render();
   renderer.shadowMap.needsUpdate = true;
   setLoad(1, 'Ready. Hop in.');

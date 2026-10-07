@@ -267,6 +267,12 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
       waterColor: 0x0d2730, distortionScale: 1.6, fog: true, alpha: 1,
     });
     water.material.uniforms.size.value = 6;
+    // the stock shader adds a flat 10% grey to every reflection and lights the surface with a
+    // fixed sun, which turns the river milky beige at dusk and night; tint it by the sky instead
+    water.material.fragmentShader = water.material.fragmentShader.replace(
+      '( vec3( 0.1 ) + reflectionSample * 0.9 + reflectionSample * specularLight )',
+      '( waterColor * 0.5 + reflectionSample * 0.94 + specularLight * 0.6 )'
+    ).replace('sunColor * diffuseLight * 0.3', 'diffuseLight * waterColor * 0.6');
     world.water = water;
     // the reflection re-renders the scene: skip it when the governor says so, or when far away
     const reflect = water.onBeforeRender.bind(water);
@@ -281,6 +287,18 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
       water.visible = !camera || camera.position.z < -380;
     });
   }
+  // River body colour: a deep green-teal, lit by whatever the sky is doing right now.
+  const riverBody = new THREE.Color('#1f5a5e');
+  world.lightWater = (dir, sunColor, sunIntensity, skyColor, skyIntensity, night) => {
+    if (water.isWater) {
+      const u = water.material.uniforms;
+      u.sunDirection.value.copy(dir);
+      u.sunColor.value.copy(sunColor).multiplyScalar((sunIntensity / 3) * (1 - night * 0.7));
+      u.waterColor.value.copy(riverBody).multiply(skyColor).multiplyScalar(0.25 + skyIntensity * 0.35);
+    } else {
+      water.material.color.copy(riverBody).multiplyScalar(THREE.MathUtils.lerp(0.75, 0.22, night));
+    }
+  };
   water.rotation.x = -Math.PI / 2;
   water.position.set(0, RIVER.level, (RIVER.zNear + RIVER.zFar) / 2);
   scene.add(water);
@@ -753,7 +771,7 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
 
 // ---------------------------------------------------------------- bridge
 // A cantilever truss in the spirit of Howrah Bridge.
-export function buildBridge(scene, route) {
+export function buildBridge(scene, route, { shimmer = true } = {}) {
   const g = new THREE.Group();
   const z0 = RIVER.zNear + 6, z1 = RIVER.zFar - 6;
   const L = z0 - z1;
@@ -834,8 +852,9 @@ export function buildBridge(scene, route) {
     group: g,
     setNight(n) {
       bulbMat.emissiveIntensity = 0.1 + n * 3.2;
+      // a painted glow stands in for the lamps' reflection where the river has no mirror
       refl.material.opacity = n * 0.8;
-      refl.visible = n > 0.01;
+      refl.visible = shimmer && n > 0.01;
     },
   };
 }

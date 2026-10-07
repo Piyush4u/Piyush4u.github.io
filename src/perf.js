@@ -162,34 +162,54 @@ export function mergeStatic(root) {
 }
 
 // Compile every program, upload every texture and buffer, and prime the shadow and
-// reflection passes — all before the curtain lifts.
-export async function warmUp(renderer, scene, camera, extra = () => {}) {
-  const hidden = [];
-  const culled = [];
+// reflection passes — all before the curtain lifts. The work is sliced across frames
+// (a few milliseconds of uploads, then a batch of the scene at a time) so the loader
+// keeps animating instead of freezing while the GPU warms up.
+export async function warmUp(renderer, scene, camera, { extra = () => {}, onProgress = () => {} } = {}) {
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const hidden = [], culled = [], textures = new Set();
   scene.traverse((o) => {
     if (o.visible === false) { hidden.push(o); o.visible = true; }
     if (o.frustumCulled) { culled.push(o); o.frustumCulled = false; }
     const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
-    for (const m of mats) for (const k in m) {
-      const v = m[k];
-      if (v && v.isTexture) renderer.initTexture(v);
-    }
+    for (const m of mats) for (const k in m) if (m[k] && m[k].isTexture) textures.add(m[k]);
   });
   const dbg = location.search.includes('debug');
   const t = performance.now();
+  // 1. textures, ~10 ms of uploads per frame
+  let slice = performance.now(), i = 0;
+  for (const tex of textures) {
+    renderer.initTexture(tex);
+    if (performance.now() - slice > 10) { onProgress((0.3 * ++i) / textures.size); await frame(); slice = performance.now(); }
+    else i++;
+  }
+  onProgress(0.3);
+  // 2. shader programs (in parallel where the browser supports it)
   try {
     if (renderer.compileAsync) await renderer.compileAsync(scene, camera);
   } catch {}
-  if (dbg) console.log('STAGE compileAsync', (performance.now() - t).toFixed(0));
+  onProgress(0.55);
+  if (dbg) console.log('STAGE compiled', (performance.now() - t).toFixed(0));
+  // 3. buffers, shadows and reflections: render the scene a slice at a time. Lights stay
+  // on throughout so every program sees the same light setup it will use for real.
   const rt = new THREE.WebGLRenderTarget(64, 64);
-  renderer.setRenderTarget(rt);
-  extra();
-  renderer.render(scene, camera);
+  const parts = scene.children.filter((o) => !o.isLight);
+  const batches = Math.min(12, parts.length);
+  for (let b = 0; b < batches; b++) {
+    parts.forEach((o, j) => { o.visible = j % batches === b; });
+    renderer.setRenderTarget(rt);
+    extra();
+    renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    onProgress(0.55 + (0.4 * (b + 1)) / batches);
+    await frame();
+  }
+  for (const o of parts) o.visible = true;
   if (dbg) console.log('STAGE warm render', (performance.now() - t).toFixed(0));
-  renderer.setRenderTarget(null);
   rt.dispose();
   for (const o of hidden) o.visible = false;
   for (const o of culled) o.frustumCulled = true;
+  onProgress(1);
 }
 
 // Hides anything tagged userData.cull (metres) once it is further than that from the
