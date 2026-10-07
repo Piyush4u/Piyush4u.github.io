@@ -37,9 +37,6 @@ a { color: inherit; }
     linear-gradient(90deg, rgba(8, 9, 12, 0.55) 0%, rgba(8, 9, 12, 0.08) 42%, rgba(8, 9, 12, 0) 60%, rgba(8, 9, 12, 0.18) 100%),
     linear-gradient(180deg, rgba(8, 9, 12, 0.35) 0%, rgba(8, 9, 12, 0) 18%, rgba(8, 9, 12, 0) 75%, rgba(8, 9, 12, 0.45) 100%);
 }
- 40% { transform: translate(2%, -3%); }
-  60% { transform: translate(-2%, -1%); } 80% { transform: translate(3%, 3%); } 100% { transform: translate(0, 0); }
-}
 
 /* ---------------------------------------------------------------- loader */
 #loader {
@@ -51,7 +48,17 @@ a { color: inherit; }
 .loader-inner { width: min(420px, 84vw); text-align: center; }
 .loader-name { font-family: var(--serif); font-size: clamp(44px, 8vw, 72px); line-height: 1; letter-spacing: -0.01em; }
 .loader-line { margin-top: 14px; color: var(--muted); font-size: 15px; }
-.loader-track { margin: 34px auto 12px; height: 2px; background: var(--line); overflow: hidden; border-radius: 2px; }
+.loader-track { position: relative; margin: 34px auto 12px; height: 2px; background: var(--line); overflow: hidden; border-radius: 2px; }
+/* a glint that keeps sweeping even while the main thread is busy compiling (compositor-only) */
+.loader-track::after {
+  content: ""; position: absolute; inset: 0; width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(255, 236, 170, .85), transparent);
+  transform: translateX(-100%); animation: glint 1.6s cubic-bezier(.45, 0, .25, 1) infinite; will-change: transform;
+}
+@keyframes glint { to { transform: translateX(340%); } }
+.loader-name { animation: rise 1.1s cubic-bezier(.2, .7, .2, 1) both; }
+.loader-line { animation: rise 1.1s .12s cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } }
 #loader-bar { height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform .5s ease; }
 .loader-note { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
 
@@ -231,5 +238,6 @@ html:not(.js) .scrim, .static .scrim { background: radial-gradient(100% 60% at 5
 html:not(.js) .top, .static .top { opacity: 1; transform: none; background: rgba(13,15,19,.8); backdrop-filter: blur(10px); }
 
 @media (prefers-reduced-motion: reduce) {
-    .wheel::after { animation: none; opacity: 1; }
+  .wheel::after { animation: none; opacity: 1; }
+  .loader-track::after, .loader-name, .loader-line { animation: none; }
 }
