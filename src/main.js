@@ -13,6 +13,7 @@ import { clamp, lerp, smooth, easeInOut, remap, nextFrame } from './util.js';
 import { buildRoute, buildWorld, buildBridge, RIVER, WALK_OUT } from './world.js';
 import { buildTaxi } from './taxi.js';
 import { loadCar } from './car.js';
+import { loadKit } from './kit.js';
 import { place, chaiStall, paperMountain, kpiTower, pharmacy, steelPlant, billboard, toolCrates } from './landmarks.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -100,9 +101,17 @@ async function main() {
   scene.add(hemi);
 
   setLoad(0.12, 'Mixing paint…');
+  // textures first (the kit's street props borrow the steel material), then the env + models in parallel
+  let assets = null;
+  const kitJob = loadTextures(renderer, (k) => setLoad(0.08 + k * 0.12, 'Mixing paint…')).then(() =>
+    loadKit((k) => setLoad(0.2 + k * 0.12, 'Building the street…')).catch((e) => {
+      console.warn('Street assets failed to load; falling back to the procedural city', e);
+      return null;
+    })
+  );
   const [env] = await Promise.all([
     createEnvironment(renderer),
-    loadTextures(renderer, (k) => setLoad(0.12 + k * 0.2, 'Mixing paint…')),
+    kitJob.then((k) => { assets = k; }),
   ]);
   env.update(0, scene);
   setLoad(0.34, 'Laying the road…');
@@ -191,7 +200,7 @@ async function main() {
 
   setLoad(0.45, 'Painting the city…');
   await nextFrame();
-  const world = buildWorld(scene, route, exclusions, { isMobile });
+  const world = buildWorld(scene, route, exclusions, { isMobile }, assets);
   setLoad(0.65, 'Bolting the bridge…');
   await nextFrame();
   const bridge = buildBridge(scene, route);

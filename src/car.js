@@ -103,7 +103,24 @@ export async function loadCar(onProgress) {
       m.castShadow = false;
     }
     if (mat.name === 'Light') {
-      mat.emissive = new THREE.Color(0xfff1d0);
+      // one mesh holds both head- and tail-lamps: glow warm white at the nose, red at the tail
+      mat.emissiveMap = null;
+      mat.emissive = new THREE.Color(0xfff0d8);
+      mat.emissiveIntensity = 0;
+      const inv = m.matrixWorld.clone().invert();
+      const fwd = new THREE.Vector3(0, 0, 1).transformDirection(inv);
+      const mid = m.worldToLocal(boxOf([m]).getCenter(new THREE.Vector3()));
+      mat.onBeforeCompile = (sh) => {
+        sh.uniforms.uFwd = { value: fwd };
+        sh.uniforms.uMid = { value: mid };
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform vec3 uFwd; uniform vec3 uMid; varying float vFront;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFront = dot(position - uMid, uFwd);');
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying float vFront;')
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance *= mix(vec3(1.0, 0.06, 0.03), vec3(1.0), step(0.0, vFront));');
+      };
+      mat.customProgramCacheKey = () => 'camaro-lamps';
       headLamp = mat;
     }
     if (mat.name === 'CarPaint') {
@@ -134,7 +151,7 @@ export async function loadCar(onProgress) {
     body,
     wheels: wheels.map((w) => w.pivot),
     setNight(n) {
-      if (headLamp) headLamp.emissiveIntensity = n * 4;
+      if (headLamp) headLamp.emissiveIntensity = n * 2.2;
       if (tailLamp) tailLamp.emissiveIntensity = 0.35 + n * 3;
       spot.intensity = n * 60;
     },

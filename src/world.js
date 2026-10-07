@@ -4,6 +4,8 @@ import { Water } from 'three/examples/jsm/objects/Water.js';
 import { rng, canvas, tex, radialTexture, beamMatrix, paintVertexColor, normalizeForMerge, addGroundGrime } from './util.js';
 import { TEX, pbr } from './materials.js';
 import { FacadeKit, metricUV, GROUND_FLOOR, FLOOR } from './facades.js';
+import { planStreets, tryKitBuilding } from './streets.js';
+import { instanceAll, animateTrees } from './kit.js';
 
 export const ROAD_HALF = 4.5;
 export const WALK_OUT = 7.4;
@@ -119,7 +121,8 @@ function facadeTextures() {
 }
 
 // ---------------------------------------------------------------- geometry helpers
-function ribbon(route, from, to, y, uvScale = 12, step = 1) {
+// gaps: [[s0, s1], ...] stretches of centre-line distance to leave open (side-street mouths)
+function ribbon(route, from, to, y, uvScale = 12, step = 1, gaps = []) {
   const pos = [], uv = [], idx = [];
   const N = route.samples.length - 1;
   const f = {};
@@ -130,12 +133,13 @@ function ribbon(route, from, to, y, uvScale = 12, step = 1) {
     route.frame(i / N, f);
     if (prev) dist += prev.distanceTo(f.p);
     prev = f.p.clone();
+    if (gaps.some(([g0, g1]) => dist > g0 && dist < g1)) { row = 0; continue; }
     const a = f.p.clone().addScaledVector(f.r, from);
     const b = f.p.clone().addScaledVector(f.r, to);
     pos.push(a.x, y, a.z, b.x, y, b.z);
     uv.push(0, dist / uvScale, 1, dist / uvScale);
     if (row > 0) {
-      const k = row * 2;
+      const k = pos.length / 3 - 2;
       idx.push(k - 2, k, k - 1, k - 1, k, k + 1);
     }
     row++;
@@ -151,9 +155,9 @@ function ribbon(route, from, to, y, uvScale = 12, step = 1) {
   return g;
 }
 
-function curbFace(route, off, h, step = 2) {
+function curbFace(route, off, h, step = 2, gaps = []) {
   const pos = [], idx = [], uvs = [];
-  let distC = 0, prevC = null;
+  let distC = 0, prevC = null, dist = 0, prevP = null;
   const N = route.samples.length - 1;
   const f = {};
   let row = 0;
@@ -162,10 +166,13 @@ function curbFace(route, off, h, step = 2) {
     const a = f.p.clone().addScaledVector(f.r, off);
     if (prevC) distC += prevC.distanceTo(a);
     prevC = a;
+    if (prevP) dist += prevP.distanceTo(f.p);
+    prevP = f.p.clone();
+    if (gaps.some(([g0, g1]) => dist > g0 && dist < g1)) { row = 0; continue; }
     pos.push(a.x, 0, a.z, a.x, h, a.z);
     uvs.push(distC / 2, 0, distC / 2, 1);
     if (row > 0) {
-      const k = row * 2;
+      const k = pos.length / 3 - 2;
       idx.push(k - 2, k, k - 1, k - 1, k, k + 1);
     }
     row++;
@@ -198,7 +205,7 @@ function buildingGeometry(w, h, d, r) {
 const PALETTE = ['#e9dcc0', '#d39a76', '#efe6d2', '#bccab9', '#e2b98b', '#cfc7b8', '#e8cfc7', '#f3eee3', '#c9b48f', '#a9bfc9', '#dcc6a0'];
 
 // ---------------------------------------------------------------- world
-export function buildWorld(scene, route, exclusions, quality) {
+export function buildWorld(scene, route, exclusions, quality, assets = null) {
   const r = rng(42);
   const world = { nightMats: [], update: [] };
   const N = route.samples.length - 1;
@@ -276,6 +283,12 @@ export function buildWorld(scene, route, exclusions, quality) {
     scene.add(bank);
   }
 
+  // Side streets, signals, signs and shelters from the road kit
+  const streets = assets
+    ? planStreets({ route, kit: assets, exclusions, rng: rng(91), ROAD_HALF, WALK_OUT, RIVER })
+    : { gaps: { '-1': [], '1': [] }, lampHeads: [] };
+  world.streets = streets;
+
   // Road & sidewalks
   const roadMat = pbr('asphalt', { side: THREE.DoubleSide, normalScale: 1.2, envMapIntensity: 1.1 });
   const road = new THREE.Mesh(ribbon(route, -ROAD_HALF, ROAD_HALF, 0.0, 9, 1), roadMat);
@@ -283,8 +296,8 @@ export function buildWorld(scene, route, exclusions, quality) {
   scene.add(road);
   world.road = roadMat;
   const walkMat = addGroundGrime(pbr('pavers', { side: THREE.DoubleSide }), { height: 0.4, strength: 0 });
-  for (const [a, b] of [[ROAD_HALF, WALK_OUT], [-WALK_OUT, -ROAD_HALF]]) {
-    const g = ribbon(route, a, b, 0.16, 2.4, 1);
+  for (const [a, b, sd] of [[ROAD_HALF, WALK_OUT, 1], [-WALK_OUT, -ROAD_HALF, -1]]) {
+    const g = ribbon(route, a, b, 0.16, 2.4, 1, streets.gaps[sd]);
     const uv = g.attributes.uv;
     for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * ((WALK_OUT - ROAD_HALF) / 2.4));
     const m = new THREE.Mesh(g, walkMat);
@@ -294,11 +307,11 @@ export function buildWorld(scene, route, exclusions, quality) {
   const curbPaint = new THREE.MeshStandardMaterial({ map: TEX.curb_col, roughness: 0.8, side: THREE.DoubleSide });
   const curbPlain = pbr('concrete', { repeat: [1, 0.05], side: THREE.DoubleSide });
   for (const off of [ROAD_HALF, -ROAD_HALF]) {
-    const m = new THREE.Mesh(curbFace(route, off, 0.16, 1), curbPaint);
+    const m = new THREE.Mesh(curbFace(route, off, 0.16, 1, streets.gaps[Math.sign(off)]), curbPaint);
     m.receiveShadow = true;
     scene.add(m);
   }
-  for (const off of [WALK_OUT, -WALK_OUT]) scene.add(new THREE.Mesh(curbFace(route, off, 0.16), curbPlain));
+  for (const off of [WALK_OUT, -WALK_OUT]) scene.add(new THREE.Mesh(curbFace(route, off, 0.16, 2, streets.gaps[Math.sign(off)]), curbPlain));
 
   const inRiver = (z, pad = 6) => z < RIVER.zNear + pad && z > RIVER.zFar - pad;
   const excluded = (x, z, rad) => exclusions.some((e) => Math.hypot(e.x - x, e.z - z) < e.r + rad);
@@ -361,7 +374,26 @@ export function buildWorld(scene, route, exclusions, quality) {
   for (const side of [-1, 1]) {
     let s = 4;
     const L = route.length;
+    const kitBlocks = assets ? assets.buildings.filter((b) => b.kind === 'block' || b.name !== 'soho-block') : [];
+    let sohoBlocks = 0;
     while (s < L + 30) {
+      if (kitBlocks.length && r() < 0.9) {
+        // a real (photo-textured) building, front on the footpath; on bends try narrower ones
+        const tries = [];
+        if (sohoBlocks < 2 && r() < 0.18) tries.push(assets.buildings.find((b) => b.name === 'soho-block'));
+        tries.push(kitBlocks[Math.floor(r() * kitBlocks.length)]);
+        tries.push(...kitBlocks.slice().sort((a, b) => a.size.x - b.size.x).slice(0, 4).sort(() => r() - 0.5));
+        let placed = null;
+        for (const pf of tries) {
+          placed = tryKitBuilding({ pf, route, s, side, WALK_OUT, excluded, inRiver });
+          if (placed) { if (pf.name === 'soho-block') sohoBlocks++; break; }
+        }
+        if (placed) {
+          exclusions.push({ x: placed.centre.x, z: placed.centre.z, r: Math.min(placed.w, placed.depth) * 0.5 });
+          s += placed.w + 0.15 + r() * 0.6;
+          continue;
+        }
+      }
       const w = 8 + r() * 8;
       const u = Math.min(1, s / L);
       route.frame(u, f);
@@ -387,6 +419,17 @@ export function buildWorld(scene, route, exclusions, quality) {
       const off = 34 + r() * 30;
       const x = f.p.x + f.r.x * side * off;
       const z = f.p.z + f.r.z * side * off;
+      if (assets && r() < 0.45) {
+        const pf = assets.buildings[Math.floor(r() * assets.buildings.length)];
+        const rad = Math.hypot(pf.size.x, pf.size.z) / 2;
+        if (!inRiver(z, rad + 4) && !excluded(x, z, rad * 0.9) && route.distToRoad(x, z) > 20 + rad * 0.5) {
+          const front = new THREE.Vector3(x, 0, z).addScaledVector(f.r, -side * pf.size.z / 2);
+          pf.place(front, Math.atan2(-f.r.x * side, -f.r.z * side));
+          exclusions.push({ x, z, r: rad * 0.7 });
+          s += pf.size.x + 6 + r() * 10;
+          continue;
+        }
+      }
       tryBuilding(x, z, w, d, h, Math.atan2(f.t.x, f.t.z) + (r() - 0.5) * 0.3, 20);
       s += w + 6 + r() * 10;
     }
@@ -439,6 +482,7 @@ export function buildWorld(scene, route, exclusions, quality) {
   ]);
   const headGeo = new THREE.BoxGeometry(0.26, 0.04, 0.5).translate(0, 6.83, 1.85);
   const lampPts = [];
+  const wireY = assets?.props.lamp ? 7.2 : 6.2;
   for (let s = 6; s < route.length - 10; s += 26) {
     route.frame(s / route.length, f);
     for (const side of [-1, 1]) {
@@ -450,14 +494,32 @@ export function buildWorld(scene, route, exclusions, quality) {
       lampPts.push({ x, z, rot, side, onBridge: inRiver(z, 0) });
     }
   }
-  const poleMesh = new THREE.InstancedMesh(poleGeo, pbr('steel', { color: 0x4a5056, repeat: [0.5, 2] }), lampPts.length);
+  const kitLamp = assets?.props.lamp;
+  const heads = []; // { pos, yaw }
+  if (kitLamp) {
+    for (const p of lampPts) {
+      const m = kitLamp.place(new THREE.Vector3(p.x, 0.16, p.z), p.rot);
+      for (const t of kitLamp.tips) heads.push({ pos: t.clone().applyMatrix4(m), yaw: p.rot });
+    }
+    for (const pos of streets.lampHeads) heads.push({ pos, yaw: 0 });
+  }
+  const poleMesh = new THREE.InstancedMesh(poleGeo, pbr('steel', { color: 0x4a5056, repeat: [0.5, 2] }), kitLamp ? 0 : lampPts.length);
   const headMat = new THREE.MeshStandardMaterial({ color: 0xfff2d0, emissive: 0xffc982, emissiveIntensity: 0 });
-  const headMesh = new THREE.InstancedMesh(headGeo, headMat, lampPts.length);
+  const nHeads = kitLamp ? heads.length : lampPts.length;
+  const headMesh = new THREE.InstancedMesh(kitLamp ? new THREE.BoxGeometry(0.34, 0.05, 0.6) : headGeo, headMat, nHeads);
   const poolTex = radialTexture('rgba(255,196,120,0.9)', 'rgba(255,170,90,0)', 128);
   const poolMat = new THREE.MeshBasicMaterial({ map: poolTex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
-  const poolMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(8, 8).rotateX(-Math.PI / 2), poolMat, lampPts.length);
+  const poolMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(8, 8).rotateX(-Math.PI / 2), poolMat, nHeads);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
-  lampPts.forEach((p, i) => {
+  if (kitLamp) {
+    heads.forEach(({ pos, yaw }, i) => {
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      m4.compose(v.copy(pos).setY(pos.y - 0.12), q, one);
+      headMesh.setMatrixAt(i, m4);
+      m4.compose(v.set(pos.x, 0.03, pos.z), new THREE.Quaternion(), one);
+      poolMesh.setMatrixAt(i, m4);
+    });
+  } else lampPts.forEach((p, i) => {
     q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.rot);
     m4.compose(v.set(p.x, 0.16, p.z), q, one);
     poleMesh.setMatrixAt(i, m4);
@@ -478,15 +540,16 @@ export function buildWorld(scene, route, exclusions, quality) {
   for (const k of ['-1', '1']) {
     const arr = bySide[k];
     for (let i = 0; i < arr.length - 1; i++) {
-      const a = new THREE.Vector3(arr[i].x, 6.2, arr[i].z), b = new THREE.Vector3(arr[i + 1].x, 6.2, arr[i + 1].z);
+      const a = new THREE.Vector3(arr[i].x, wireY, arr[i].z), b = new THREE.Vector3(arr[i + 1].x, wireY, arr[i + 1].z);
       if (a.distanceTo(b) > 40) continue;
+      if (exclusions.some((e) => e.r > 5 && Math.hypot(e.x - (a.x + b.x) / 2, e.z - (a.z + b.z) / 2) < e.r)) continue;
       for (let strand = 0; strand < 3; strand++) {
         const sag = 0.8 + strand * 0.35 + r() * 0.4;
         let prev = a.clone().setY(a.y - strand * 0.25);
         for (let t = 1; t <= 10; t++) {
           const tt = t / 10;
           const p = a.clone().lerp(b, tt);
-          p.y = 6.2 - strand * 0.25 - Math.sin(tt * Math.PI) * sag;
+          p.y = wireY - strand * 0.25 - Math.sin(tt * Math.PI) * sag;
           wire.push(prev.x, prev.y, prev.z, p.x, p.y, p.z);
           prev = p;
         }
@@ -554,11 +617,13 @@ export function buildWorld(scene, route, exclusions, quality) {
     const side = r() < 0.5 ? -1 : 1;
     const off = WALK_OUT - 0.9;
     const x = f.p.x + f.r.x * side * off, z = f.p.z + f.r.z * side * off;
-    if (inRiver(z, 8) || excluded(x, z, 9)) continue;
-    treePts.push([x, z, 0.7 + r() * 0.35, r() * 6]);
+    // keep clear of landmarks, side streets, shelters and signals (big exclusions), not of the buildings behind
+    if (inRiver(z, 8) || exclusions.some((e) => (e.r > 9 || e.r < 4.5) && Math.hypot(e.x - x, e.z - z) < e.r + 2.5)) continue;
+    treePts.push([x, z, 0.7 + r() * 0.35, r() * 6, true]);
   }
   // park trees in open ground
-  for (let i = 0; i < 260; i++) {
+  const parkTrees = assets ? (quality.isMobile ? 50 : 150) : 260;
+  for (let i = 0; i < parkTrees; i++) {
     const x = (r() - 0.5) * 500, z = 60 - r() * 900;
     if (inRiver(z, 10) || excluded(x, z, 3) || route.distToRoad(x, z) < 12) continue;
     treePts.push([x, z, 0.9 + r() * 0.6, r() * 6]);
@@ -570,7 +635,15 @@ export function buildWorld(scene, route, exclusions, quality) {
   leafMat.map.wrapS = leafMat.map.wrapT = THREE.ClampToEdgeWrapping;
   const leafDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: TEX.leaves_col, alphaTest: 0.45 });
   const col = new THREE.Color();
-  variants.forEach((vt, vi) => {
+  if (assets?.trees.length) {
+    // wind-animated trees from the kit (three species, morph-target sway)
+    const kinds = assets.trees;
+    // the broad rain tree goes in open ground; the narrower two line the footpaths
+    treePts.forEach(([x, z, sc, rot, street], i) => {
+      if (street) kinds[1 + (i % 2)].place(new THREE.Vector3(x, 0.1, z), rot, 0.62 + sc * 0.18);
+      else kinds[i % kinds.length].place(new THREE.Vector3(x, 0.1, z), rot, 0.8 + sc * 0.3);
+    });
+  } else variants.forEach((vt, vi) => {
     const pts = treePts.filter((_, i) => i % 3 === vi);
     if (!pts.length) return;
     const trunks = new THREE.InstancedMesh(vt.wood, barkMat, pts.length);
@@ -629,7 +702,17 @@ export function buildWorld(scene, route, exclusions, quality) {
   world.tintClouds = (color, k) => cloudMats.forEach((m) => { m.color.copy(color); m.opacity = m.userData.base * k; });
   world.sky = { stars, starMat, moon, moonGlow };
 
+  if (assets) {
+    instanceAll(scene, [...assets.buildings, ...Object.values(assets.roads), ...Object.values(assets.props), ...assets.trees]);
+    const wind = animateTrees(assets.trees);
+    world.update.push((t) => wind(t));
+  }
+
   world.setNight = (n) => {
+    if (assets) {
+      for (const m of assets.nightMats) m.emissiveIntensity = m.userData.night === 'windows' ? n * 1.8 : n * 0.55;
+      if (assets.poster) assets.poster.emissiveIntensity = 0.25 + n * 0.9;
+    }
     bMat.emissiveIntensity = n * 1.25;
     facades.setNight(n);
     headMat.emissiveIntensity = n * 6;
