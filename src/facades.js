@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { canvas, tex, normalizeForMerge, paintVertexColor, addGroundGrime } from './util.js';
 import { TEX, pbr } from './materials.js';
+import { chunkedInstances, chunkMesh } from './perf.js';
 
 // Street-facing facade detail for the first row of buildings: real 3D window
 // frames, glass that reflects the sky, louvred shutters, wrought-iron balconies
@@ -201,11 +202,12 @@ export function kitAssets() {
 
 // A single detailed window (frame, glass, optional open shutters) for hand-placed buildings.
 const _shutterMats = {};
+const _frameMats = {};
 export function windowUnit({ lit = false, shutters = true, shutterColor = '#2f5e44', frameColor = '#f1ede3', open = 0.35 } = {}) {
   const { geo, mats } = kitAssets();
   const g = new THREE.Group();
-  const frameMat = mats.frame.clone();
-  frameMat.color.set(frameColor);
+  // one material per colour, shared, so a landmark's windows merge into one draw
+  const frameMat = _frameMats[frameColor] || (_frameMats[frameColor] = addGroundGrime(new THREE.MeshStandardMaterial({ color: frameColor, roughness: 0.55 })));
   const f = new THREE.Mesh(geo.frame, frameMat);
   f.castShadow = f.receiveShadow = true;
   g.add(f);
@@ -368,25 +370,22 @@ export class FacadeKit {
   build(scene) {
     const out = { setNight: () => {} };
     const { geo, mats } = kitAssets();
-    const make = (key, g, mat, cast = true) => {
+    // chunked so the camera and shadow frustums can cull them; on layer 1 so the river's
+    // reflection pass skips this fine detail
+    const make = (key, g, mat, cast = false) => {
       const list = this.I[key];
       if (!list.length) return null;
-      const m = new THREE.InstancedMesh(g, mat, list.length);
       const c = new THREE.Color();
-      list.forEach((it, i) => {
-        m.setMatrixAt(i, it.m);
-        if (it.color) m.setColorAt(i, c.set(it.color));
-      });
-      m.castShadow = cast;
-      m.receiveShadow = true;
-      scene.add(m);
-      return m;
+      const colors = list.map((it) => (it.color ? c.clone().set(it.color) : null));
+      const meshes = chunkedInstances(g, mat, list.map((it) => it.m), { colors: colors.some(Boolean) ? colors.map((x) => x || new THREE.Color(1, 1, 1)) : null, cast, layer: 1, cull: 150 });
+      meshes.forEach((m) => scene.add(m));
+      return meshes;
     };
-    make('frame', geo.frame, mats.frame);
+    make('frame', geo.frame, mats.frame, false);
     make('paneDark', geo.pane, mats.paneDark, false);
     make('paneLit', geo.pane, mats.paneLit, false);
     make('shutter', geo.shutter, mats.shutter);
-    make('slab', geo.slab, mats.slab);
+    make('slab', geo.slab, mats.slab, true);
     make('rail', geo.rail, mats.rail);
     make('railSide', geo.railSide, mats.rail);
     make('cloth', geo.cloth, mats.cloth);
@@ -399,9 +398,9 @@ export class FacadeKit {
     const signMat = new THREE.MeshStandardMaterial({ map: atlas, emissive: 0xffffff, emissiveMap: atlas, emissiveIntensity: 0.0, roughness: 0.6 });
     if (this.signGeos.length) {
       const signs = new THREE.Mesh(mergeGeometries(this.signGeos), signMat);
-      signs.castShadow = true;
       signs.receiveShadow = true;
       scene.add(signs);
+      chunkMesh(signs, { cull: 170 }).forEach((m) => m.layers.set(1));
     }
     out.setNight = (n) => {
       mats.paneLit.emissiveIntensity = 0.05 + n * 1.5;

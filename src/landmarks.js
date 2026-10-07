@@ -233,6 +233,7 @@ export function paperMountain() {
   const sheets = [];
   for (let i = 0; i < 26; i++) {
     const s = mesh(new THREE.PlaneGeometry(0.3, 0.42), sheetMat, 0, 0, 0, g);
+    s.userData.dynamic = true;
     s.castShadow = true;
     s.userData = { a: r() * 6.28, rad: 1 + r() * 3.2, h: 2 + r() * 5, sp: 0.2 + r() * 0.35, wob: r() * 6 };
     sheets.push(s);
@@ -293,6 +294,7 @@ export function kpiTower() {
   // crown
   mesh(mbox(16, 4, 16, 2), pbr('steel', { color: 0x4a525a }), 0, H + 8, -14, g);
   const beacon = std({ color: 0xff2a2a, emissive: 0xff2020, emissiveIntensity: 2 });
+  beacon.userData.live = true; // pulses: keep its own material
   mesh(new THREE.CylinderGeometry(0.1, 0.1, 8), std({ color: 0x777 }), 0, H + 14, -14, g);
   mesh(new THREE.SphereGeometry(0.35, 12, 8), beacon, 0, H + 18.2, -14, g);
 
@@ -353,7 +355,8 @@ export function kpiTower() {
     center: new THREE.Vector3(0, 0, -14),
     update(t, near) {
       if (!near) return;
-      const k = Math.floor(t * 8);
+      // a 1024px canvas upload is not free: 3 Hz is enough for a slowly ticking dashboard
+      const k = Math.floor(t * 3);
       if (k !== last) { last = k; draw(t); }
       beacon.emissiveIntensity = 1 + Math.max(0, Math.sin(t * 3)) * 4;
     },
@@ -452,6 +455,7 @@ export function pharmacy() {
   // the green cross
   const crossMat = std({ color: 0x0fbf6a, emissive: 0x19e07e, emissiveIntensity: 1.5, roughness: 0.3 });
   const cross = new THREE.Group();
+  cross.userData.dynamic = true;
   cross.position.set(7.4, 6.6, 0.4);
   g.add(cross);
   mesh(new THREE.BoxGeometry(0.06, 0.06, 2.6), std({ color: 0x555 }), 0, 0.8, -1.2, cross);
@@ -594,6 +598,7 @@ export function steelPlant() {
   const dark = std({ color: 0x222428, metalness: 0.6, roughness: 0.4 });
   for (const [x, ph] of [[-9, 0], [9, 1.9]]) {
     const base = new THREE.Group();
+    base.userData.dynamic = true;
     base.position.set(x, 0, -5);
     g.add(base);
     mesh(new THREE.CylinderGeometry(0.9, 1.1, 0.6, 24), dark, 0, 0.3, 0, base);
@@ -623,9 +628,9 @@ export function steelPlant() {
   const smokeTex = radialTexture('rgba(200,200,200,0.7)', 'rgba(200,200,200,0)');
   const smoke = [];
   chimneyTops.forEach((top, ci) => {
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 7; i++) {
       const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, transparent: true, depthWrite: false, color: 0xcfcac2 }));
-      s.userData = { top, o: i / 12 + ci * 0.13, drift: 0.6 + r() * 0.8 };
+      s.userData = { top, o: i / 7 + ci * 0.13, drift: 0.6 + r() * 0.8 };
       g.add(s);
       smoke.push(s);
     }
@@ -750,42 +755,56 @@ export function billboard(p, i) {
 export function toolCrates(tools) {
   const g = new THREE.Group();
   const r = rng(606);
-  const plank = (label, sub) =>
-    tex(
-      canvas(256, 256, (c, w) => {
-        c.drawImage(TEX.wood_col.image, 0, 0, w, w);
-        c.strokeStyle = 'rgba(70,45,22,0.85)';
-        c.lineWidth = 16;
-        c.strokeRect(8, 8, w - 16, w - 16);
-        c.beginPath(); c.moveTo(16, 16); c.lineTo(w - 16, w - 16); c.stroke();
-        if (label) {
-          c.fillStyle = 'rgba(20,16,12,0.86)';
-          c.fillRect(30, 86, w - 60, 86);
-          c.fillStyle = '#f5c518';
-          let size = 40;
-          c.font = `800 ${size}px ${FONT_SANS}`;
-          while (c.measureText(label).width > w - 80 && size > 18) { size -= 2; c.font = `800 ${size}px ${FONT_SANS}`; }
-          c.textAlign = 'center';
-          c.fillText(label, w / 2, 128);
-          c.fillStyle = '#d9cbb3';
-          c.font = `500 15px ${FONT_MONO}`;
-          c.fillText(sub, w / 2, 156);
-        }
-      })
-    );
-  const side = pbr('wood', { repeat: [1, 1] });
+  // one 4x4 atlas: 12 labelled crate fronts + a plain plank cell for the other faces,
+  // so the whole stack is a single mesh and a single draw call
+  const cell = 256;
+  const drawPlank = (c, x, y, label, sub) => {
+    c.save();
+    c.translate(x, y);
+    c.drawImage(TEX.wood_col.image, 0, 0, cell, cell);
+    c.strokeStyle = 'rgba(70,45,22,0.85)';
+    c.lineWidth = 16;
+    c.strokeRect(8, 8, cell - 16, cell - 16);
+    c.beginPath(); c.moveTo(16, 16); c.lineTo(cell - 16, cell - 16); c.stroke();
+    if (label) {
+      c.fillStyle = 'rgba(20,16,12,0.86)';
+      c.fillRect(30, 86, cell - 60, 86);
+      c.fillStyle = '#f5c518';
+      let size = 40;
+      c.font = `800 ${size}px ${FONT_SANS}`;
+      while (c.measureText(label).width > cell - 80 && size > 18) { size -= 2; c.font = `800 ${size}px ${FONT_SANS}`; }
+      c.textAlign = 'center';
+      c.fillText(label, cell / 2, 128);
+      c.fillStyle = '#d9cbb3';
+      c.font = `500 15px ${FONT_MONO}`;
+      c.fillText(sub, cell / 2, 156);
+    }
+    c.restore();
+  };
+  const atlas = tex(
+    canvas(cell * 4, cell * 4, (c) => {
+      tools.forEach(([name, sub], i) => drawPlank(c, (i % 4) * cell, Math.floor(i / 4) * cell, name, sub));
+      drawPlank(c, 3 * cell, 3 * cell);
+    })
+  );
+  const mat = std({ map: atlas, normalMap: TEX.wood_nor, roughness: 0.85 });
+  const cellUV = (i) => [(i % 4) / 4, 1 - (Math.floor(i / 4) + 1) / 4]; // u0, v0 (canvas y is flipped)
   const S = 1.5;
   const rows = [5, 4, 3];
   let k = 0;
   rows.forEach((n, row) => {
     for (let i = 0; i < n && k < tools.length; i++, k++) {
-      const [name, sub] = tools[k];
-      const front = std({ map: plank(name, sub), normalMap: TEX.wood_nor, roughness: 0.85 });
-      const m = mesh(new THREE.BoxGeometry(S, S, S), [side, side, side, side, front, side], (i - (n - 1) / 2) * (S + 0.06), S / 2 + row * S, (r() - 0.5) * 0.15, g);
+      const geo = new THREE.BoxGeometry(S, S, S);
+      const uv = geo.attributes.uv;
+      for (let f = 0; f < 6; f++) {
+        const [u0, v0] = cellUV(f === 4 ? k : 15); // face 4 is +z, the front
+        for (let q = 0; q < 4; q++) uv.setXY(f * 4 + q, u0 + uv.getX(f * 4 + q) / 4, v0 + uv.getY(f * 4 + q) / 4);
+      }
+      const m = mesh(geo, mat, (i - (n - 1) / 2) * (S + 0.06), S / 2 + row * S, (r() - 0.5) * 0.15, g);
       m.rotation.y = (r() - 0.5) * 0.12;
     }
   });
   // pallet
-  mesh(new THREE.BoxGeometry(5 * S + 1, 0.15, S + 0.6), std({ color: 0x8a6a42, roughness: 1 }), 0, 0.07, 0, g).position.y = -0.0;
+  mesh(new THREE.BoxGeometry(5 * S + 1, 0.15, S + 0.6), std({ color: 0x8a6a42, roughness: 1 }), 0, 0.07, 0, g);
   return { group: g, radius: 6 };
 }

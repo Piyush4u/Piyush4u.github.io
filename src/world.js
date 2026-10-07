@@ -6,7 +6,9 @@ import { TEX, pbr } from './materials.js';
 import { FacadeKit, metricUV, GROUND_FLOOR, FLOOR } from './facades.js';
 import { planStreets, tryKitBuilding } from './streets.js';
 import { instanceAll, animateTrees } from './kit.js';
+import { chunkMesh, chunkedInstances } from './perf.js';
 
+const UP = new THREE.Vector3(0, 1, 0);
 export const ROAD_HALF = 4.5;
 export const WALK_OUT = 7.4;
 export const RIVER = { zNear: -582, zFar: -716, level: -3.2 };
@@ -35,7 +37,7 @@ export function buildRoute() {
     u = Math.min(1, Math.max(0, u));
     out.p = curve.getPointAt(u, out.p || new THREE.Vector3());
     out.t = curve.getTangentAt(u, out.t || new THREE.Vector3()).setY(0).normalize();
-    out.r = (out.r || new THREE.Vector3()).crossVectors(out.t, new THREE.Vector3(0, 1, 0)).normalize();
+    out.r = (out.r || new THREE.Vector3()).crossVectors(out.t, UP).normalize();
     return out;
   };
   const distToRoad = (x, z) => {
@@ -248,7 +250,7 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
     return t;
   })();
   let water;
-  if (quality.isMobile) {
+  if (quality.tier === 0) {
     water = new THREE.Mesh(
       new THREE.PlaneGeometry(3600, RIVER.zNear - RIVER.zFar + 10),
       new THREE.MeshPhysicalMaterial({
@@ -260,12 +262,19 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
   } else {
     waterNormal.repeat.set(1, 1);
     water = new Water(new THREE.PlaneGeometry(3600, RIVER.zNear - RIVER.zFar + 10), {
-      textureWidth: 1024, textureHeight: 1024, waterNormals: waterNormal,
+      textureWidth: quality.tier === 2 ? 512 : 256, textureHeight: quality.tier === 2 ? 512 : 256, waterNormals: waterNormal,
       sunDirection: new THREE.Vector3(0.3, 0.6, -0.7).normalize(), sunColor: 0xffe2b0,
       waterColor: 0x0d2730, distortionScale: 1.6, fog: true, alpha: 1,
     });
     water.material.uniforms.size.value = 6;
     world.water = water;
+    // the reflection re-renders the scene: skip it when the governor says so, or when far away
+    const reflect = water.onBeforeRender.bind(water);
+    let tick = 0;
+    water.onBeforeRender = (...a) => {
+      // half-rate reflection: the river moves slowly, nobody can tell
+      if (world.reflections !== false && (tick++ & 1) === 0) reflect(...a);
+    };
     world.update.push((t, camera) => {
       water.material.uniforms.time.value = t * 0.35;
       // only pay for the reflection render near the river
@@ -294,6 +303,7 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
   const road = new THREE.Mesh(ribbon(route, -ROAD_HALF, ROAD_HALF, 0.0, 9, 1), roadMat);
   road.receiveShadow = true;
   scene.add(road);
+  chunkMesh(road, { chunk: 140, cull: 520 }).forEach((m) => m.layers.set(1));
   world.road = roadMat;
   const walkMat = addGroundGrime(pbr('pavers', { side: THREE.DoubleSide }), { height: 0.4, strength: 0 });
   for (const [a, b, sd] of [[ROAD_HALF, WALK_OUT, 1], [-WALK_OUT, -ROAD_HALF, -1]]) {
@@ -303,6 +313,7 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
     const m = new THREE.Mesh(g, walkMat);
     m.receiveShadow = true;
     scene.add(m);
+    chunkMesh(m, { chunk: 140, cull: 420 }).forEach((c) => c.layers.set(1));
   }
   const curbPaint = new THREE.MeshStandardMaterial({ map: TEX.curb_col, roughness: 0.8, side: THREE.DoubleSide });
   const curbPlain = pbr('concrete', { repeat: [1, 0.05], side: THREE.DoubleSide });
@@ -310,8 +321,13 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
     const m = new THREE.Mesh(curbFace(route, off, 0.16, 1, streets.gaps[Math.sign(off)]), curbPaint);
     m.receiveShadow = true;
     scene.add(m);
+    chunkMesh(m, { chunk: 140, cull: 300 }).forEach((c) => c.layers.set(1));
   }
-  for (const off of [WALK_OUT, -WALK_OUT]) scene.add(new THREE.Mesh(curbFace(route, off, 0.16, 2, streets.gaps[Math.sign(off)]), curbPlain));
+  for (const off of [WALK_OUT, -WALK_OUT]) {
+    const m = new THREE.Mesh(curbFace(route, off, 0.16, 2, streets.gaps[Math.sign(off)]), curbPlain);
+    scene.add(m);
+    chunkMesh(m, { chunk: 140, cull: 300 }).forEach((c) => c.layers.set(1));
+  }
 
   const inRiver = (z, pad = 6) => z < RIVER.zNear + pad && z > RIVER.zFar - pad;
   const excluded = (x, z, rad) => exclusions.some((e) => Math.hypot(e.x - x, e.z - z) < e.r + rad);
@@ -458,19 +474,23 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
   fronts.castShadow = true;
   fronts.receiveShadow = true;
   scene.add(fronts);
+  chunkMesh(fronts, { chunk: 140, cull: 600 }).forEach((m) => m.layers.set(1));
   const facades = kit.build(scene);
   const buildings = new THREE.Mesh(mergeGeometries(bGeos), bMat);
   buildings.castShadow = true;
   buildings.receiveShadow = true;
   scene.add(buildings);
+  chunkMesh(buildings, { chunk: 140, cull: 660 });
   const roofs = new THREE.Mesh(mergeGeometries(roofGeos), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }));
   roofs.castShadow = true;
   roofs.receiveShadow = true;
   scene.add(roofs);
+  chunkMesh(roofs, { chunk: 140, cull: 320 }).forEach((m) => m.layers.set(1));
   if (awnGeos.length) {
     const aw = new THREE.Mesh(mergeGeometries(awnGeos), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: THREE.DoubleSide }));
     aw.castShadow = true;
     scene.add(aw);
+    chunkMesh(aw, { chunk: 140, cull: 200 }).forEach((m) => m.layers.set(1));
   }
   world.windows = bMat;
 
@@ -666,32 +686,32 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
   const sp = [];
   for (let i = 0; i < 1800; i++) {
     const th = r() * Math.PI * 2, ph = Math.acos(r() * 0.92);
-    sp.push(Math.sin(ph) * Math.cos(th) * 1400, Math.cos(ph) * 1400, Math.sin(ph) * Math.sin(th) * 1400);
+    sp.push(Math.sin(ph) * Math.cos(th) * 640, Math.cos(ph) * 640, Math.sin(ph) * Math.sin(th) * 640);
   }
   starGeo.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
   const starMat = new THREE.PointsMaterial({ color: 0xffffff, size: 1.6, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false });
   const stars = new THREE.Points(starGeo, starMat);
   scene.add(stars);
   const moon = new THREE.Mesh(
-    new THREE.SphereGeometry(18, 32, 16),
+    new THREE.SphereGeometry(8.5, 32, 16),
     new THREE.MeshBasicMaterial({ color: 0xfff6e0, fog: false, transparent: true, opacity: 0 })
   );
   const moonGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: radialTexture('rgba(255,240,210,0.55)', 'rgba(255,240,210,0)'), fog: false, transparent: true, opacity: 0, depthWrite: false }));
-  moonGlow.scale.set(220, 220, 1);
+  moonGlow.scale.set(108, 108, 1);
   scene.add(moon, moonGlow);
   // Clouds (CC0 cloud billboard from pmndrs/assets), tinted by the time of day
   const cloudTex = new THREE.TextureLoader().load('assets/tex/cloud.webp');
   cloudTex.colorSpace = THREE.SRGBColorSpace;
   const clouds = new THREE.Group();
   const cloudMats = [];
-  for (let i = 0; i < 46; i++) {
+  for (let i = 0; i < 18; i++) {
     const m = new THREE.SpriteMaterial({ map: cloudTex, transparent: true, depthWrite: false, fog: false, opacity: 0.55 + r() * 0.35, rotation: r() * 6.28 });
     m.userData.base = m.opacity;
     cloudMats.push(m);
     const sp = new THREE.Sprite(m);
-    const a = r() * Math.PI * 2, d = 900 + r() * 700;
-    sp.position.set(Math.cos(a) * d, 140 + r() * 260, Math.sin(a) * d);
-    const sc = 260 + r() * 420;
+    const a = r() * Math.PI * 2, d = 430 + r() * 200;
+    sp.position.set(Math.cos(a) * d, 85 + r() * 130, Math.sin(a) * d);
+    const sc = 160 + r() * 220;
     sp.scale.set(sc * (1.4 + r()), sc, 1);
     sp.userData.base = m.opacity;
     clouds.add(sp);
@@ -703,9 +723,13 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
   world.sky = { stars, starMat, moon, moonGlow };
 
   if (assets) {
-    instanceAll(scene, [...assets.buildings, ...Object.values(assets.roads), ...Object.values(assets.props), ...assets.trees]);
+    // layer 1: drawn by the main camera, skipped by the river's reflection pass
+    instanceAll(scene, assets.buildings, { chunk: 140, cull: 640, layer: 1 });
+    instanceAll(scene, Object.values(assets.roads), { cull: 460, layer: 1 });
+    instanceAll(scene, Object.values(assets.props), { chunk: 140, cull: 300, layer: 1 });
+    instanceAll(scene, assets.trees, { chunk: 140, cull: 300, layer: 1 });
     const wind = animateTrees(assets.trees);
-    world.update.push((t) => wind(t));
+    world.update.push((t, camera) => wind(t, camera));
   }
 
   world.setNight = (n) => {
@@ -717,6 +741,9 @@ export function buildWorld(scene, route, exclusions, quality, assets = null) {
     facades.setNight(n);
     headMat.emissiveIntensity = n * 6;
     poolMat.opacity = n * 0.55;
+    poolMesh.visible = n > 0.01;
+    stars.visible = n > 0.35;
+    moon.visible = moonGlow.visible = n > 0.3;
     starMat.opacity = Math.max(0, n - 0.35) * 1.4;
     moon.material.opacity = Math.max(0, n - 0.3);
     moonGlow.material.opacity = Math.max(0, n - 0.3) * 0.8;
@@ -808,6 +835,7 @@ export function buildBridge(scene, route) {
     setNight(n) {
       bulbMat.emissiveIntensity = 0.1 + n * 3.2;
       refl.material.opacity = n * 0.8;
+      refl.visible = n > 0.01;
     },
   };
 }

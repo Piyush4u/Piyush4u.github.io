@@ -83,7 +83,9 @@ export async function loadCar(onProgress) {
     m.receiveShadow = true;
     const mat = m.material;
     if (!mat) continue;
-    if (mat.name === 'Windows') {
+    // any transmissive glass (the compressor renamed 'Windows') forces a whole extra scene
+    // render per frame for refraction — plain transparent glass looks the same at this scale
+    if (mat.transmission > 0 && mat.name !== 'Red_glass') {
       mat.transmission = 0;
       mat.transparent = true;
       mat.opacity = 0.38;

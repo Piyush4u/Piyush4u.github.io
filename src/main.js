@@ -14,6 +14,7 @@ import { buildRoute, buildWorld, buildBridge, RIVER, WALK_OUT } from './world.js
 import { buildTaxi } from './taxi.js';
 import { loadCar } from './car.js';
 import { loadKit } from './kit.js';
+import { mergeStatic, warmUp, chunkedInstances, DistanceCuller } from './perf.js';
 import { place, chaiStall, paperMountain, kpiTower, pharmacy, steelPlant, billboard, toolCrates } from './landmarks.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -21,7 +22,9 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 
 const loaderBar = $('#loader-bar');
 const loaderNote = $('#loader-note');
+const T0 = performance.now();
 const setLoad = (p, note) => {
+  if (location.search.includes('debug')) console.log('STAGE', (performance.now() - T0).toFixed(0), p, note);
   if (loaderBar) loaderBar.style.transform = `scaleX(${p})`;
   if (note && loaderNote) loaderNote.textContent = note;
 };
@@ -68,17 +71,32 @@ async function main() {
 
   // ---------------------------------------------------------------- renderer
   const canvasEl = $('#scene');
-  const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: !isMobile, powerPreference: 'high-performance' });
-  let pixelRatio = Math.min(window.devicePixelRatio, isMobile ? 1.5 : 1.75);
+  const renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true, powerPreference: 'high-performance', stencil: false });
+  // Quality tier: 2 = high (discrete GPU), 1 = medium (integrated / unknown), 0 = low (phones, tablets).
+  // A frame-rate governor below can only step it down from here, never up, so it never thrashes.
+  const gpuName = (() => {
+    try {
+      const gl = renderer.getContext();
+      const ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    } catch { return ''; }
+  })();
+  const qParam = new URLSearchParams(location.search).get('q');
+  let tier = isMobile ? 0 : /Intel|Mali|Adreno|PowerVR|SwiftShader|llvmpipe|Software|Basic Render|Radeon\(TM\) Graphics|Vega \d+ Graphics/i.test(gpuName) ? 1 : 2;
+  if (qParam) tier = { low: 0, med: 1, medium: 1, high: 2 }[qParam] ?? tier;
+  const dpr = window.devicePixelRatio || 1;
+  let pixelRatio = Math.min(dpr, [isMobile ? 1.25 : 1, 1.25, 1.5][tier]);
   renderer.setPixelRatio(pixelRatio);
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(innerWidth, innerHeight, false);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = tier === 0 ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  renderer.shadowMap.autoUpdate = false; // updated only when something moves (see loop)
 
   const scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0xe8b9a0, 0.004);
-  const camera = new THREE.PerspectiveCamera(isMobile ? 55 : 42, innerWidth / innerHeight, 0.1, 3000);
+  const camera = new THREE.PerspectiveCamera(isMobile ? 55 : 42, innerWidth / innerHeight, 0.3, 700);
+  camera.layers.enable(1); // layer 1 = fine detail, skipped by the river's reflection pass
 
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -91,9 +109,10 @@ async function main() {
 
   const sun = new THREE.DirectionalLight(0xffffff, 3);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(isMobile ? 1024 : 4096, isMobile ? 1024 : 4096);
+  const shadowRes = tier === 0 ? 1024 : 2048;
+  sun.shadow.mapSize.set(shadowRes, shadowRes);
   const sc = sun.shadow.camera;
-  sc.left = -55; sc.right = 55; sc.top = 55; sc.bottom = -55; sc.near = 1; sc.far = 400;
+  sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45; sc.near = 60; sc.far = 260;
   sun.shadow.bias = -0.0004;
   sun.shadow.normalBias = 0.04;
   scene.add(sun, sun.target);
@@ -110,7 +129,7 @@ async function main() {
     })
   );
   const [env] = await Promise.all([
-    createEnvironment(renderer),
+    createEnvironment(renderer, { steps: tier === 0 ? 2 : 4 }),
     kitJob.then((k) => { assets = k; }),
   ]);
   env.update(0, scene);
@@ -175,6 +194,9 @@ async function main() {
   const landmarks = [];
   const addLandmark = (lm, u, side, dist) => {
     place(route, lm.group, u, side, dist);
+    mergeStatic(lm.group); // hundreds of parts -> a handful of draw calls
+    lm.group.userData.cull = lm.radius > 30 ? 460 : 380;
+    lm.group.traverse((o) => { if (!o.isLight) o.layers.set(1); }); // not needed in the river reflection
     scene.add(lm.group);
     const c = (lm.center || new THREE.Vector3()).clone().applyEuler(lm.group.rotation).add(lm.group.position);
     exclusions.push({ x: c.x, z: c.z, r: lm.radius });
@@ -200,7 +222,7 @@ async function main() {
 
   setLoad(0.45, 'Painting the city…');
   await nextFrame();
-  const world = buildWorld(scene, route, exclusions, { isMobile }, assets);
+  const world = buildWorld(scene, route, exclusions, { isMobile, tier }, assets);
   setLoad(0.65, 'Bolting the bridge…');
   await nextFrame();
   const bridge = buildBridge(scene, route);
@@ -215,53 +237,78 @@ async function main() {
     console.warn('Car model failed, using the Ambassador', e);
     taxi = buildTaxi({ lights: true });
   }
+  taxi.root.traverse((o) => { if (!o.isLight) o.layers.set(1); });
   scene.add(taxi.root);
-  // a few parked cousins
-  const parked = [];
-  for (const [z, side] of [[-30, 1], [-128, -1], [-212, 1], [-300, -1], [-470, 1], [-548, -1], [-760, 1]]) {
-    const t = buildTaxi({ lights: false });
-    const f = route.frame(U(z));
-    t.root.position.copy(f.p).addScaledVector(f.r, side * (3.3));
-    t.root.rotation.y = Math.atan2(f.t.x, f.t.z) + (side > 0 ? 0 : Math.PI);
-    scene.add(t.root);
-    parked.push(t);
+  // a few parked cousins: one hand-built Ambassador, merged and instanced
+  {
+    const proto = buildTaxi({ lights: false });
+    mergeStatic(proto.root);
+    proto.root.updateMatrixWorld(true);
+    const spots = [[-30, 1], [-128, -1], [-212, 1], [-300, -1], [-470, 1], [-548, -1], [-760, 1]].map(([z, side]) => {
+      const f = route.frame(U(z));
+      const m = new THREE.Matrix4().compose(
+        f.p.clone().addScaledVector(f.r, side * 3.3),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(f.t.x, f.t.z) + (side > 0 ? 0 : Math.PI)),
+        new THREE.Vector3(1, 1, 1)
+      );
+      return m;
+    });
+    proto.root.traverse((o) => {
+      if (!o.isMesh) return;
+      const local = o.matrixWorld.clone();
+      const mats = spots.map((m) => m.clone().multiply(local));
+      for (const im of chunkedInstances(o.geometry, o.material, mats, { cast: o.castShadow && !o.material.transparent, chunk: 300, cull: 260 })) {
+        im.renderOrder = o.renderOrder;
+        im.layers.set(1);
+        scene.add(im);
+      }
+    });
   }
 
   // ---------------------------------------------------------------- post
   setLoad(0.8, 'Warming the engine…');
   await nextFrame();
   let composer = null, bloom = null, grade = null, gtao = null;
-  if (!isMobile) {
-    const w = innerWidth * pixelRatio, h = innerHeight * pixelRatio;
-    const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, samples: 4, depthTexture: new THREE.DepthTexture(w, h) });
+  const buildComposer = () => {
+    const w = Math.floor(innerWidth * pixelRatio), h = Math.floor(innerHeight * pixelRatio);
+    const wantAO = new URLSearchParams(location.search).has('ao') && tier === 2;
+    const rtOpts = { type: THREE.HalfFloatType, samples: tier === 2 ? 4 : 2 };
+    if (wantAO) rtOpts.depthTexture = new THREE.DepthTexture(w, h);
+    const rt = new THREE.WebGLRenderTarget(w, h, rtOpts);
     composer = new EffectComposer(renderer, rt);
     composer.setPixelRatio(pixelRatio);
     composer.addPass(new RenderPass(scene, camera));
-    try {
-      // ambient occlusion from the real depth buffer (so alpha-cut leaves occlude correctly)
-      gtao = new GTAOPass(scene, camera, w, h);
-      gtao.setGBuffer(composer.renderTarget1.depthTexture);
-      gtao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 16, distanceFallOff: 1 });
-      gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
-      gtao.blendIntensity = 0.85;
-      composer.addPass(gtao);
-    } catch (e) {
-      console.warn('AO disabled', e);
-      gtao = null;
+    if (wantAO) {
+      try {
+        gtao = new GTAOPass(scene, camera, w, h);
+        gtao.setGBuffer(composer.renderTarget1.depthTexture);
+        gtao.updateGtaoMaterial({ radius: 1.2, distanceExponent: 1.4, thickness: 2, scale: 1.1, samples: 8, distanceFallOff: 1 });
+        gtao.blendIntensity = 0.85;
+        composer.addPass(gtao);
+      } catch { gtao = null; }
     }
-    bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth / 2, innerHeight / 2), 0.3, 0.6, 0.92);
+    // bloom works on a quarter-size buffer: soft glow, a fraction of the cost
+    bloom = new UnrealBloomPass(new THREE.Vector2(Math.floor(innerWidth / 4), Math.floor(innerHeight / 4)), 0.3, 0.6, 0.92);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
     grade = new ShaderPass(GradeShader);
     composer.addPass(grade);
-  }
+  };
+  const dropComposer = () => {
+    composer?.dispose();
+    composer = null;
+    bloom = null;
+    grade = null;
+    gtao = null;
+  };
+  if (tier > 0) buildComposer();
 
   // ---------------------------------------------------------------- time of day
   const C = (h) => new THREE.Color(h);
   const TOD = [
     { p: 0.0, elev: 4, az: 120, sun: C('#ffb08a'), si: 1.6, sky: C('#a9b6d8'), gnd: C('#4a3a33'), hi: 0.55, fog: C('#e7b8a0'), fd: 0.0042, tur: 8, ray: 2.6, mie: 0.006, exp: 0.62, night: 0.05 },
     { p: 0.18, elev: 22, az: 140, sun: C('#ffe2c0'), si: 2.6, sky: C('#bcd2f0'), gnd: C('#4d4a3a'), hi: 0.8, fog: C('#d9d6d2'), fd: 0.0032, tur: 6, ray: 1.6, mie: 0.005, exp: 0.6, night: 0 },
-    { p: 0.36, elev: 48, az: 170, sun: C('#fff6ea'), si: 3.2, sky: C('#c4dcff'), gnd: C('#4f553e'), hi: 0.95, fog: C('#c8d6e2'), fd: 0.0021, tur: 4, ray: 1.2, mie: 0.004, exp: 0.55, night: 0 },
+    { p: 0.36, elev: 48, az: 170, sun: C('#fff6ea'), si: 3.2, sky: C('#c4dcff'), gnd: C('#4f553e'), hi: 0.95, fog: C('#c8d6e2'), fd: 0.003, tur: 4, ray: 1.2, mie: 0.004, exp: 0.55, night: 0 },
     { p: 0.52, elev: 18, az: 220, sun: C('#ffc684'), si: 2.8, sky: C('#c8c4d8'), gnd: C('#55463a'), hi: 0.75, fog: C('#e4c39f'), fd: 0.0032, tur: 7, ray: 2, mie: 0.006, exp: 0.6, night: 0 },
     { p: 0.66, elev: 6, az: 245, sun: C('#ff9a52'), si: 2.2, sky: C('#b9a6c8'), gnd: C('#4a3530'), hi: 0.6, fog: C('#d9946f'), fd: 0.0036, tur: 9, ray: 3, mie: 0.008, exp: 0.66, night: 0.15 },
     { p: 0.78, elev: 0.5, az: 255, sun: C('#ff6a3a'), si: 1.0, sky: C('#7f74a6'), gnd: C('#2e2430'), hi: 0.45, fog: C('#8a5a63'), fd: 0.0042, tur: 10, ray: 3.6, mie: 0.01, exp: 0.78, night: 0.55 },
@@ -278,7 +325,7 @@ async function main() {
     for (const key of ['sun', 'sky', 'gnd', 'fog']) tod[key].copy(a[key]).lerp(b[key], k);
     return tod;
   }
-  const sunDir = new THREE.Vector3();
+  const sunDir = new THREE.Vector3(), lightDir = new THREE.Vector3(), moonDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(62), THREE.MathUtils.degToRad(200));
   const cloudTint = new THREE.Color();
 
   // ---------------------------------------------------------------- DOM story
@@ -305,6 +352,9 @@ async function main() {
   function maxScroll() { return document.documentElement.scrollHeight - innerHeight; }
   function jumpTo(p) { window.scrollTo({ top: p * maxScroll(), behavior: reduceMotion ? 'auto' : 'smooth' }); }
 
+  // Only touch the DOM when a value actually changes (style writes are not free).
+  const panelState = panels.map(() => ({ o: -1, y: 0, vis: '', live: null }));
+  let lastIdx = -1, lastActive = -1, lastProg = -1, lastHint = -1;
   function updatePanels(p) {
     STOPS.forEach((s, i) => {
       const el = panels[i];
@@ -313,22 +363,34 @@ async function main() {
       let o = 1;
       if (fadeIn > 0) o = Math.min(o, remap(p, s.p0 - fadeIn, s.p0));
       if (fadeOut > 0) o = Math.min(o, 1 - remap(p, s.p1, s.p1 + fadeOut));
-      o = clamp(o);
-      el.style.opacity = o.toFixed(3);
+      o = Math.round(clamp(o) * 500) / 500;
+      const st = panelState[i];
+      if (o === st.o) return;
+      st.o = o;
+      el.style.opacity = String(o);
       el.style.transform = `translate3d(0, ${((1 - o) * (p < s.p0 ? 28 : -28)).toFixed(1)}px, 0)`;
-      el.style.visibility = o < 0.01 ? 'hidden' : 'visible';
-      el.classList.toggle('live', o > 0.6);
+      const vis = o < 0.01 ? 'hidden' : 'visible';
+      if (vis !== st.vis) { st.vis = vis; el.style.visibility = vis; }
+      const live = o > 0.6;
+      if (live !== st.live) { st.live = live; el.classList.toggle('live', live); }
     });
-    // project sub-cards
     const k = remap(p, work.p0, work.p1);
     const idx = Math.min(PROJECTS.length - 1, Math.floor(k * PROJECTS.length));
-    subs.forEach((s, i) => s.classList.toggle('on', i === idx));
-    if (projCount) projCount.textContent = `${idx + 1} / ${PROJECTS.length}`;
+    if (idx !== lastIdx) {
+      lastIdx = idx;
+      subs.forEach((s, i) => s.classList.toggle('on', i === idx));
+      if (projCount) projCount.textContent = `${idx + 1} / ${PROJECTS.length}`;
+    }
     let active = 0;
     STOPS.forEach((s, i) => { if (p >= s.p0 - 0.03) active = i; });
-    rail.forEach((a, i) => a.classList.toggle('on', i === active));
-    if (progressEl) progressEl.style.transform = `scaleX(${p})`;
-    if (hint) hint.style.opacity = String(1 - remap(p, 0.005, 0.03));
+    if (active !== lastActive) {
+      lastActive = active;
+      rail.forEach((a, i) => a.classList.toggle('on', i === active));
+    }
+    const prog = Math.round(p * 1000) / 1000;
+    if (prog !== lastProg && progressEl) { lastProg = prog; progressEl.style.transform = `scaleX(${prog})`; }
+    const hv = Math.round((1 - remap(p, 0.005, 0.03)) * 100) / 100;
+    if (hv !== lastHint && hint) { lastHint = hv; hint.style.opacity = String(hv); }
   }
 
   // ---------------------------------------------------------------- camera rig
@@ -370,19 +432,62 @@ async function main() {
     mouse.y = e.clientY / innerHeight - 0.5;
   });
 
+  // On phones the address bar slides in and out while scrolling, firing resize events.
+  // Reallocating every render target each time causes visible hitches, so height-only
+  // changes are ignored (the canvas is sized to the large viewport in CSS) and real
+  // resizes are debounced.
+  let lastW = innerWidth, lastH = innerHeight, resizeTimer = 0;
   addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.fov = innerWidth < 760 ? 55 : 42;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-    composer?.setSize(innerWidth, innerHeight);
+    const w = innerWidth, h = innerHeight;
+    if (w === lastW && Math.abs(h - lastH) < Math.max(160, lastH * 0.2)) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      lastW = innerWidth;
+      lastH = innerHeight;
+      camera.aspect = lastW / lastH;
+      camera.fov = lastW < 760 ? 55 : 42;
+      camera.updateProjectionMatrix();
+      renderer.setSize(lastW, lastH, false);
+      composer?.setSize(lastW, lastH);
+    }, 150);
   });
 
   const adaptive = !new URLSearchParams(location.search).has('still');
+  const debug = new URLSearchParams(location.search).has('debug');
+  // ?fps shows a tiny meter (frame rate, quality tier, render scale) for testing on real devices
+  const fpsEl = new URLSearchParams(location.search).has('fps') ? document.body.appendChild(Object.assign(document.createElement('div'), {
+    style: 'position:fixed;left:8px;bottom:8px;z-index:99;font:600 12px/1.4 ui-monospace,monospace;color:#f5c518;background:rgba(0,0,0,.6);padding:4px 8px;border-radius:6px;pointer-events:none',
+  })) : null;
+  let fpsFrames = 0, fpsTime = 0;
+  if (debug) {
+    renderer.info.autoReset = false;
+    window.__perf = { renderer, scene, camera, frameMs: [], makeFrustum: (c) => new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse)) };
+  }
   const clock = new THREE.Clock();
-  let frames = 0, fpsT = 0;
+  let frames = 0, fpsT = 0, frameNo = 0, lastDrop = 0;
+  const notches = [
+    () => { if (pixelRatio > 1) { pixelRatio = Math.max(1, pixelRatio - 0.25); return true; } },
+    () => { if (bloom?.enabled) { bloom.enabled = false; return true; } },
+    () => { if (world.water && world.reflections !== false) { world.reflections = false; return true; } },
+    () => { if (sun.shadow.mapSize.x > 1024) { sun.shadow.mapSize.set(1024, 1024); sun.shadow.map?.dispose(); sun.shadow.map = null; return true; } },
+    () => { if (composer) { dropComposer(); return true; } },
+    () => { if (pixelRatio > 0.8) { pixelRatio = 0.8; return true; } },
+  ];
+  function degrade() {
+    for (const n of notches) {
+      const pr = pixelRatio;
+      if (n()) {
+        if (pixelRatio !== pr) {
+          renderer.setPixelRatio(pixelRatio);
+          composer?.setPixelRatio(pixelRatio);
+        }
+        return;
+      }
+    }
+  }
   function frame() {
-    const dt = Math.min(clock.getDelta(), 0.05);
+    const rawDt = clock.getDelta();
+    const dt = Math.min(rawDt, 0.05);
     const t = clock.elapsedTime;
     current = reduceMotion ? target : lerp(current, target, 1 - Math.exp(-dt * 3.2));
     if (Math.abs(current - target) < 0.00002) current = target;
@@ -421,7 +526,7 @@ async function main() {
     skyU.rayleigh.value = d.ray;
     skyU.mieCoefficient.value = d.mie;
     // light comes from at least 25° up so the night still has moonlit shadows
-    const lightDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - Math.max(d.elev, 24)), theta);
+    lightDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - Math.max(d.elev, 24)), theta);
     sun.position.copy(f.p).addScaledVector(lightDir, 150);
     sun.target.position.copy(f.p);
     sun.color.copy(d.sun);
@@ -439,8 +544,7 @@ async function main() {
     world.setNight(n);
     bridge.setNight(n);
     taxi.setNight(clamp(n * 1.3));
-    const moonDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(62), THREE.MathUtils.degToRad(200));
-    world.sky.moon.position.copy(camera.position).addScaledVector(moonDir, 1200);
+    world.sky.moon.position.copy(camera.position).addScaledVector(moonDir, 590);
     world.sky.moonGlow.position.copy(world.sky.moon.position);
     world.sky.stars.position.copy(camera.position);
     world.clouds.position.set(camera.position.x, 0, camera.position.z);
@@ -456,39 +560,49 @@ async function main() {
     for (const u of world.update) u(t, camera);
 
     updatePanels(current);
+    culler.update(camera.position);
+    // shadows: every frame while the car moves; at a standstill a gentle 15 Hz keeps
+    // the swaying trees and robot arms honest
+    const moving = Math.abs(dist) > 1e-4;
+    frameNo++;
+    if (moving || frameNo % (tier === 0 ? 6 : 4) === 0) renderer.shadowMap.needsUpdate = true;
+    const t0 = debug ? performance.now() : 0;
+    if (debug) renderer.info.reset();
     if (composer) composer.render();
     else renderer.render(scene, camera);
+    if (debug) window.__perf.frameMs.push(performance.now() - t0);
 
-    // adaptive resolution: keep it smooth on modest GPUs
-    frames++;
-    fpsT += dt;
-    if (fpsT > 1.5 && adaptive) {
-      const fps = frames / fpsT;
-      if (fps < 38) {
-        // shed cost in order of least visible loss: resolution, then AO, then bloom
-        if (pixelRatio > 1) {
-          pixelRatio = Math.max(1, pixelRatio - 0.25);
-          renderer.setPixelRatio(pixelRatio);
-          composer?.setPixelRatio?.(pixelRatio);
-        } else if (gtao && gtao.enabled) {
-          gtao.enabled = false;
-        } else if (bloom && bloom.enabled) {
-          bloom.enabled = false;
-        } else if (pixelRatio > 0.75) {
-          pixelRatio = 0.75;
-          renderer.setPixelRatio(pixelRatio);
-          composer?.setPixelRatio?.(pixelRatio);
-        }
+    if (fpsEl) {
+      fpsFrames++;
+      fpsTime += rawDt;
+      if (fpsTime > 0.5) {
+        fpsEl.textContent = `${Math.round(fpsFrames / fpsTime)} fps · tier ${tier} · ${pixelRatio.toFixed(2)}x${composer ? '' : ' · direct'}`;
+        fpsFrames = 0;
+        fpsTime = 0;
       }
-      frames = 0;
-      fpsT = 0;
+    }
+    // governor: if we can't hold ~55 fps, shed cost one notch at a time (never back up)
+    if (adaptive && !document.hidden) {
+      frames++;
+      fpsT += rawDt;
+      if (fpsT > 2) {
+        const fps = frames / fpsT;
+        if (fps < 52 && t - lastDrop > 3) { degrade(); lastDrop = t; }
+        frames = 0;
+        fpsT = 0;
+      }
     }
     requestAnimationFrame(frame);
   }
 
-  setLoad(0.92, 'Compiling shaders…');
+  setLoad(0.92, 'Warming up the GPU…');
   await nextFrame();
-  try { renderer.compile(scene, camera); } catch {}
+  const culler = new DistanceCuller(scene);
+  // compile every shader and upload every mesh and texture now, not mid-scroll
+  renderer.shadowMap.needsUpdate = true;
+  await warmUp(renderer, scene, camera, () => { renderer.shadowMap.needsUpdate = true; });
+  if (composer) composer.render();
+  renderer.shadowMap.needsUpdate = true;
   setLoad(1, 'Ready. Hop in.');
   requestAnimationFrame(frame);
   await nextFrame();

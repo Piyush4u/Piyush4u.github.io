@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { pbr } from './materials.js';
+import { chunkedInstances } from './perf.js';
 
 // Third-party assets (all CC BY 4.0, credited in the footer and README), split
 // into individual prefabs and drawn with instancing:
@@ -489,57 +490,66 @@ export async function loadKit(onProgress) {
 }
 
 // ------------------------------------------------------------------ instancing
-export function instanceAll(scene, prefabs, { shadows = true } = {}) {
+export function instanceAll(scene, prefabs, { shadows = true, chunk, cull = 0, layer = 0 } = {}) {
   const meshes = [];
   for (const pf of prefabs) {
     if (!pf.instances.length) continue;
+    // small parts (road surfaces, glass, posters) needn't cast shadows
     for (const p of pf.parts) {
-      const im = new THREE.InstancedMesh(p.geometry, p.material, pf.instances.length);
-      pf.instances.forEach((m, i) => im.setMatrixAt(i, m));
-      im.castShadow = shadows && !p.material.transparent;
-      im.receiveShadow = true;
-      im.computeBoundingSphere();
-      im.computeBoundingBox?.();
-      scene.add(im);
-      meshes.push(im);
-      p.mesh = im;
+      p.geometry.computeBoundingSphere();
+      const small = p.geometry.boundingSphere.radius < 0.6 || pf.size.y < 0.5;
+      const cast = shadows && !p.material.transparent && !small;
+      p.meshes = chunkedInstances(p.geometry, p.material, pf.instances, { cast, chunk, cull, layer });
+      for (const im of p.meshes) {
+        scene.add(im);
+        meshes.push(im);
+      }
     }
   }
   return meshes;
 }
 
-// Wind: every tree samples the baked MorphBake clip at its own phase.
+// Wind: every tree samples the baked MorphBake clip at its own phase. Only chunks the
+// camera can see are updated, at 30 Hz.
 export function animateTrees(trees) {
   const dummy = new THREE.Mesh();
   const updaters = [];
+  const frustum = new THREE.Frustum(), pm = new THREE.Matrix4();
   for (const pf of trees) {
     if (!pf.instances.length) continue;
     const phases = pf.instances.map((_, i) => (i * 1.618) % 6.4);
     for (const p of pf.parts) {
-      if (!p.track || !p.mesh) continue;
+      if (!p.track || !p.meshes) continue;
       const interp = p.track.createInterpolant();
       const nT = p.geometry.morphAttributes.position?.length || 0;
-      dummy.morphTargetInfluences = new Array(nT).fill(0);
       const duration = p.track.times[p.track.times.length - 1];
-      // the depth material used for shadows has to cut the leaves out too
-      if (p.material.alphaTest) {
-        p.mesh.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: p.material.map, alphaTest: p.material.alphaTest });
+      const depth = p.material.alphaTest
+        ? new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: p.material.map, alphaTest: p.material.alphaTest })
+        : null;
+      for (const im of p.meshes) {
+        if (depth) im.customDepthMaterial = depth; // shadows must cut the leaves out too
+        // seed every instance once so the morph texture exists before warm-up
+        dummy.morphTargetInfluences = new Array(nT).fill(0);
+        for (let j = 0; j < im.count; j++) im.setMorphAt(j, dummy);
+        updaters.push((t) => {
+          if (!frustum.intersectsSphere(im.boundingSphere)) return;
+          dummy.morphTargetInfluences.length = nT;
+          const idx = im.userData.indices;
+          for (let j = 0; j < idx.length; j++) {
+            const w = interp.evaluate((t * 0.8 + phases[idx[j]]) % duration);
+            for (let k = 0; k < nT; k++) dummy.morphTargetInfluences[k] = w[k];
+            im.setMorphAt(j, dummy);
+          }
+          im.morphTexture.needsUpdate = true;
+        });
       }
-      updaters.push((t) => {
-        for (let i = 0; i < pf.instances.length; i++) {
-          const w = interp.evaluate((t * 0.8 + phases[i]) % duration);
-          for (let k = 0; k < nT; k++) dummy.morphTargetInfluences[k] = w[k];
-          p.mesh.setMorphAt(i, dummy);
-        }
-        p.mesh.morphTexture.needsUpdate = true;
-      });
     }
   }
   let last = -1;
-  return (t, near = true) => {
-    // 30 Hz is plenty for a breeze
+  return (t, camera) => {
     if (t - last < 1 / 30) return;
     last = t;
+    if (camera) frustum.setFromProjectionMatrix(pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const u of updaters) u(t);
   };
 }
