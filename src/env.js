@@ -14,7 +14,7 @@ const KEYS = [
   { p: 1.0, name: 'night', gain: 1.5 },
 ];
 
-export async function createEnvironment(renderer) {
+export async function createEnvironment(renderer, { steps = 4 } = {}) {
   const loader = new EXRLoader();
   const names = [...new Set(KEYS.map((k) => k.name))];
   const maps = {};
@@ -28,6 +28,9 @@ export async function createEnvironment(renderer) {
     )
   );
   const pmrem = new THREE.PMREMGenerator(renderer);
+  // 128px cube faces are plenty for reflections and use ~1/4 the memory of the default 256
+  const setSize = pmrem._setSize.bind(pmrem);
+  pmrem._setSize = () => setSize(128);
   const envScene = new THREE.Scene();
   const mat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
@@ -47,26 +50,34 @@ export async function createEnvironment(renderer) {
       }`,
   });
   envScene.add(new THREE.Mesh(new THREE.SphereGeometry(5, 64, 32), mat));
-  let rt = null;
-  let lastKey = '';
+  // Pre-filter every blend state once, at load (quarter steps between keys), so
+  // scrolling only swaps an existing texture — no GPU work, no hitches.
+  const STEPS = steps;
+  const cache = new Map();
+  const stateOf = (i, k) => {
+    const A = KEYS[i], B = KEYS[i + 1];
+    // identical endpoints collapse to one texture
+    const id = k === 0 ? `${A.name}*${A.gain}` : k === 1 ? `${B.name}*${B.gain}` : `${A.name}*${A.gain}>${B.name}*${B.gain}@${k}`;
+    if (cache.has(id)) return cache.get(id);
+    mat.uniforms.a.value = maps[A.name];
+    mat.uniforms.b.value = maps[B.name];
+    mat.uniforms.ga.value = A.gain;
+    mat.uniforms.gb.value = B.gain;
+    mat.uniforms.k.value = k;
+    const rt = pmrem.fromScene(envScene, 0, 0.1, 20);
+    cache.set(id, rt.texture);
+    return rt.texture;
+  };
+  for (let i = 0; i < KEYS.length - 1; i++) for (let s = 0; s <= STEPS; s++) stateOf(i, s / STEPS);
+  pmrem.dispose();
   return {
     update(p, scene) {
       let i = 0;
       while (i < KEYS.length - 2 && p > KEYS[i + 1].p) i++;
       const A = KEYS[i], B = KEYS[i + 1];
-      const k = Math.round(smooth(remap(p, A.p, B.p)) * 20) / 20;
-      const key = `${i}:${k}`;
-      if (key === lastKey) return;
-      lastKey = key;
-      mat.uniforms.a.value = maps[A.name];
-      mat.uniforms.b.value = maps[B.name];
-      mat.uniforms.ga.value = A.gain;
-      mat.uniforms.gb.value = B.gain;
-      mat.uniforms.k.value = k;
-      const next = pmrem.fromScene(envScene, 0, 0.1, 20);
-      scene.environment = next.texture;
-      rt?.dispose();
-      rt = next;
+      const k = Math.round(smooth(remap(p, A.p, B.p)) * STEPS) / STEPS;
+      const tex = stateOf(i, k);
+      if (scene.environment !== tex) scene.environment = tex;
     },
   };
 }
